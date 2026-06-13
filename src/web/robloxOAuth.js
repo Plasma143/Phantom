@@ -17,7 +17,7 @@ const ROBLOX_USERINFO_URL = 'https://apis.roblox.com/oauth/v1/userinfo';
 
 const CLIENT_ID = process.env.ROBLOX_OAUTH_CLIENT_ID;
 const CLIENT_SECRET = process.env.ROBLOX_OAUTH_CLIENT_SECRET;
-const REDIRECT_URI = process.env.ROBLOX_OAUTH_REDIRECT_URI || 'http://localhost:3000/auth/roblox/callback';
+const REDIRECT_URI = process.env.ROBLOX_OAUTH_REDIRECT_URI || 'https://r2-d2-production.up.railway.app/auth/roblox/callback';
 
 // Tracks in-progress logins: state -> { discordId, createdAt }
 const pendingStates = new Map();
