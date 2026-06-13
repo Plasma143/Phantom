@@ -1,11 +1,13 @@
 // src/web/dashboardAuth.js
 //
-// Web dashboard — "Login with Discord" flow + server picker + settings page.
+// Web dashboard — "Login with Discord" flow + server picker + settings page
+// + a public commands/help page.
 //   /dashboard/login         -> redirects to Discord's OAuth consent screen
 //   /dashboard/auth/callback -> exchanges the code, fetches the user, sets a cookie
 //   /dashboard/logout         -> clears the session cookie
 //   /dashboard                -> shows the servers you can manage with R2-D2
 //   /dashboard/server/:id     -> view + edit that server's Roblox setup
+//   /dashboard/commands       -> public list of all slash commands
 //
 // The save logic here mirrors /robloxsetup's group, verifiedrole, and
 // rankrole subcommands — same validation, same updateGuildConfig calls.
@@ -13,6 +15,9 @@
 import { Router } from 'express';
 import express from 'express';
 import crypto from 'crypto';
+import { readdir } from 'fs/promises';
+import path from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { logger } from '../utils/logger.js';
 import { getConfigValue, updateGuildConfig } from '../services/guildConfig.js';
 import { db } from '../utils/database.js';
@@ -27,6 +32,9 @@ const BOT_TOKEN = process.env.DISCORD_TOKEN;
 
 const PERM_ADMINISTRATOR = 0x8n;
 const PERM_MANAGE_GUILD = 0x20n;
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const COMMANDS_DIR = path.join(__dirname, '../commands');
 
 export const dashboardAuthRouter = Router();
 
@@ -65,6 +73,87 @@ function clearCookie(res, name) {
   res.append('Set-Cookie', `${name}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
 }
 
+// ---- Command metadata (for /dashboard/commands) ----
+
+let cachedCommands = null;
+
+async function findCommandFiles(dir) {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  let files = [];
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files = files.concat(await findCommandFiles(fullPath));
+    } else if (entry.name.endsWith('.js')) {
+      files.push(fullPath);
+    }
+  }
+  return files;
+}
+
+async function loadCommandList() {
+  if (cachedCommands) return cachedCommands;
+
+  const commands = [];
+  const files = await findCommandFiles(COMMANDS_DIR);
+
+  for (const file of files) {
+    try {
+      const mod = await import(pathToFileURL(file).href);
+      const data = mod.default?.data;
+      if (!data || typeof data.toJSON !== 'function') continue;
+
+      const json = data.toJSON();
+      const subcommands = (json.options || [])
+        .filter((opt) => opt.type === 1) // SUB_COMMAND
+        .map((opt) => ({ name: opt.name, description: opt.description }));
+
+      commands.push({
+        name: json.name,
+        description: json.description,
+        adminOnly: Boolean(json.default_member_permissions),
+        subcommands,
+      });
+    } catch (error) {
+      logger.warn(`Could not load command metadata from ${file}: ${error.message}`);
+    }
+  }
+
+  commands.sort((a, b) => a.name.localeCompare(b.name));
+  cachedCommands = commands;
+  return commands;
+}
+
+function renderCommand(cmd) {
+  const adminBadge = cmd.adminOnly
+    ? `<span style="background:#444; color:#aaa; font-size:11px; padding:2px 6px; border-radius:4px; margin-left:8px; vertical-align:middle;">Admin</span>`
+    : '';
+
+  const subcommandsHtml = cmd.subcommands.length
+    ? `
+      <ul style="margin:8px 0 0; padding-left:20px; color:#ccc; font-size:14px;">
+        ${cmd.subcommands
+          .map((sub) => `<li><code>/${cmd.name} ${sub.name}</code> — ${sub.description}</li>`)
+          .join('')}
+      </ul>
+    `
+    : '';
+
+  return `
+    <div style="background:#2b2d31; padding:16px; border-radius:8px; margin-bottom:12px;">
+      <div><code style="font-size:15px; font-weight:bold;">/${cmd.name}</code>${adminBadge}</div>
+      <p style="color:#aaa; margin:6px 0 0; font-size:14px;">${cmd.description}</p>
+      ${subcommandsHtml}
+    </div>
+  `;
+}
+
 // ---- Page shell ----
 
 function renderPage(bodyHtml, user = null) {
@@ -96,8 +185,11 @@ function renderPage(bodyHtml, user = null) {
         </style>
       </head>
       <body style="margin:0; background:#1e1f22; color:#fff; font-size:16px;">
-        <div style="background:#2b2d31; padding:14px 24px; display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; align-items:center; border-bottom:1px solid #1e1f22;">
-          <a href="/dashboard" style="color:#fff; text-decoration:none; font-weight:bold; font-size:18px;">R2-D2 Dashboard</a>
+        <div style="background:#2b2d31; padding:14px 24px; display:flex; flex-wrap:wrap; gap:20px; justify-content:space-between; align-items:center; border-bottom:1px solid #1e1f22;">
+          <div style="display:flex; align-items:center; gap:20px;">
+            <a href="/dashboard" style="color:#fff; text-decoration:none; font-weight:bold; font-size:18px;">R2-D2 Dashboard</a>
+            <a href="/dashboard/commands" style="color:#aaa; text-decoration:none; font-size:14px;">Commands</a>
+          </div>
           ${navUser}
         </div>
         <div style="padding:40px 20px; text-align:center;">
@@ -249,6 +341,47 @@ dashboardAuthRouter.get('/dashboard/auth/callback', async (req, res) => {
 dashboardAuthRouter.get('/dashboard/logout', (req, res) => {
   clearCookie(res, 'dashboard_token');
   res.redirect('/dashboard');
+});
+
+// Public: list every slash command R2-D2 offers.
+dashboardAuthRouter.get('/dashboard/commands', async (req, res) => {
+  // Best-effort login lookup, just to keep the nav consistent. Not required.
+  let user = null;
+  const token = getCookie(req, 'dashboard_token');
+  if (token) {
+    try {
+      const userRes = await fetch('https://discord.com/api/users/@me', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (userRes.ok) user = await userRes.json();
+    } catch {
+      // ignore — this page doesn't require being logged in
+    }
+  }
+
+  try {
+    const commands = await loadCommandList();
+
+    const list = commands.length
+      ? commands.map(renderCommand).join('')
+      : '<p style="color:#888;"><em>No commands found.</em></p>';
+
+    const body = `
+      <h2 style="margin-top:0;">Commands</h2>
+      <p style="color:#aaa; margin-bottom:24px;">Here's everything R2-D2 can do. Commands marked <span style="background:#444; color:#aaa; font-size:11px; padding:2px 6px; border-radius:4px;">Admin</span> require server management permissions.</p>
+
+      <div style="max-width:640px; margin:0 auto 24px; text-align:left; background:#2b2d31; padding:16px; border-radius:8px;">
+        <p style="margin:0;"><strong>Setting up Roblox verification?</strong> Server admins can configure this from the <a href="/dashboard" style="color:#5865F2;">dashboard</a>.</p>
+      </div>
+
+      <div style="max-width:640px; margin:0 auto; text-align:left;">${list}</div>
+    `;
+
+    res.send(renderPage(body, user));
+  } catch (error) {
+    logger.error('Commands page error:', error);
+    res.status(500).send('Something went wrong.');
+  }
 });
 
 // Step 3: show the servers this user can manage with R2-D2.
