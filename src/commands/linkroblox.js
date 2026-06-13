@@ -1,7 +1,11 @@
 // src/commands/linkroblox.js
 import { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { successEmbed } from '../utils/embeds.js';
-import { ROBLOX_LINK_BUTTON_ID, ROBLOX_UPDATE_BUTTON_ID } from '../handlers/robloxVerify.js';
+import {
+  ROBLOX_LINK_BUTTON_ID,
+  ROBLOX_UPDATE_BUTTON_ID,
+  ROBLOX_OAUTH_BUTTON_ID,
+} from '../handlers/robloxVerify.js';
 
 export default {
   data: new SlashCommandBuilder()
@@ -18,12 +22,16 @@ export default {
         .setCustomId(ROBLOX_UPDATE_BUTTON_ID)
         .setLabel('Update')
         .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(ROBLOX_OAUTH_BUTTON_ID)
+        .setLabel('Sign in with Roblox')
+        .setStyle(ButtonStyle.Primary),
     );
 
     await interaction.reply({
       embeds: [successEmbed(
         'Roblox Account Linking',
-        'Click **Link Roblox** to connect your Roblox account, or **Update** to refresh your roles if your rank changed.',
+        'Click **Link Roblox** to connect your Roblox account, **Update** to refresh your roles if your rank changed, or try **Sign in with Roblox** for a faster login (testing).',
       )],
       components: [row],
     });
