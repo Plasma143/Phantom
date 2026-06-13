@@ -54,7 +54,8 @@ export default {
       sub.setName('view').setDescription("View this server's current Roblox setup"),
     ),
 
-  async execute(interaction, client) {
+  async execute(interaction) {
+    const client = interaction.client;
     const sub = interaction.options.getSubcommand();
     const guildId = interaction.guild.id;
 
