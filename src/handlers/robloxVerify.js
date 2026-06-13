@@ -29,7 +29,7 @@ import {
   bioContainsCode,
 } from '../utils/roblox.js';
 import { saveRobloxLink, getRobloxLink } from '../utils/robloxDb.js';
-import { botConfig } from '../config/config.js'; // adjust filename if yours differs
+import { botConfig } from '../config/bot.js';
 
 export const ROBLOX_LINK_BUTTON_ID = 'roblox_link_start';
 export const ROBLOX_CONFIRM_BUTTON_ID = 'roblox_link_confirm';
