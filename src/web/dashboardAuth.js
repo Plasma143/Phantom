@@ -1,15 +1,19 @@
 // src/web/dashboardAuth.js
 //
-// Web dashboard — "Login with Discord" flow + server picker.
+// Web dashboard — "Login with Discord" flow + server picker + settings page.
 //   /dashboard/login         -> redirects to Discord's OAuth consent screen
 //   /dashboard/auth/callback -> exchanges the code, fetches the user, sets a cookie
 //   /dashboard                -> shows the servers you can manage with R2-D2
+//   /dashboard/server/:id     -> view that server's Roblox setup (read-only for now)
 //
-// Per-server settings pages get added at /dashboard/server/:id in the next step.
+// Editing (a form that saves changes) gets added to the server page next.
 
 import { Router } from 'express';
 import crypto from 'crypto';
 import { logger } from '../utils/logger.js';
+import { getConfigValue } from '../services/guildConfig.js';
+import { db } from '../utils/database.js';
+import { getRobloxGroupInfo } from '../utils/roblox.js';
 
 const PUBLIC_URL = process.env.PUBLIC_URL || 'https://r2-d2-production.up.railway.app';
 const REDIRECT_URI = `${PUBLIC_URL}/dashboard/auth/callback`;
@@ -85,6 +89,41 @@ function guildIconUrl(guild) {
   return guild.icon
     ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png`
     : 'https://cdn.discordapp.com/embed/avatars/0.png';
+}
+
+// Checks the logged-in user can manage `guildId`. On failure, sends an
+// appropriate response itself and returns null — callers should just
+// `return` if they get null back.
+async function requireGuildAccess(req, res, guildId) {
+  const token = getCookie(req, 'dashboard_token');
+
+  if (!token) {
+    res.send(loginPrompt("Log in with Discord to manage your server's settings."));
+    return null;
+  }
+
+  const userGuildsRes = await fetch('https://discord.com/api/users/@me/guilds', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!userGuildsRes.ok) {
+    clearCookie(res, 'dashboard_token');
+    res.send(loginPrompt('Your session expired — please log in again.'));
+    return null;
+  }
+
+  const userGuilds = await userGuildsRes.json();
+  const guild = userGuilds.find((g) => g.id === guildId);
+
+  if (!guild || !canManage(guild)) {
+    res.status(403).send(renderPage(`
+      <p>You don't have permission to manage this server.</p>
+      <a href="/dashboard" style="color:#5865F2;">← Back to servers</a>
+    `));
+    return null;
+  }
+
+  return { token, guild };
 }
 
 // ---- Routes ----
@@ -219,6 +258,64 @@ dashboardAuthRouter.get('/dashboard', async (req, res) => {
     res.send(renderPage(body));
   } catch (error) {
     logger.error('Dashboard error:', error);
+    res.status(500).send('Something went wrong.');
+  }
+});
+
+// Step 4: view one server's Roblox setup (read-only for now).
+dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
+  const { guildId } = req.params;
+
+  try {
+    const access = await requireGuildAccess(req, res, guildId);
+    if (!access) return; // requireGuildAccess already sent a response
+
+    const { guild } = access;
+
+    const [rolesRes, roblox] = await Promise.all([
+      fetch(`https://discord.com/api/guilds/${guildId}/roles`, {
+        headers: { Authorization: `Bot ${BOT_TOKEN}` },
+      }),
+      getConfigValue({ db }, guildId, 'roblox', {}),
+    ]);
+
+    const roles = rolesRes.ok ? await rolesRes.json() : [];
+    const roleMap = new Map(roles.map((r) => [r.id, r.name]));
+    const roleName = (id) => (id ? roleMap.get(id) || `Unknown role (${id})` : null);
+
+    let groupLine = '<em>Not set</em>';
+    if (roblox.groupId) {
+      const group = await getRobloxGroupInfo(roblox.groupId);
+      groupLine = group
+        ? `<strong>${group.name}</strong> (ID: ${roblox.groupId})`
+        : `Group ID ${roblox.groupId} (couldn't load name)`;
+    }
+
+    const verifiedRoleLine = roblox.verifiedRole ? roleName(roblox.verifiedRole) : '<em>Not set</em>';
+
+    const rankRoleEntries = Object.entries(roblox.rankRoles || {});
+    const rankRolesHtml = rankRoleEntries.length
+      ? rankRoleEntries.map(([rank, roleId]) => `<li>Rank ${rank} → ${roleName(roleId)}</li>`).join('')
+      : '<li><em>None set</em></li>';
+
+    const body = `
+      <img src="${guildIconUrl(guild)}" width="64" style="border-radius:50%; margin-bottom:12px;" />
+      <h2 style="margin-top:0;">${guild.name}</h2>
+
+      <div style="max-width:480px; margin:24px auto; text-align:left; background:#2b2d31; padding:24px; border-radius:10px;">
+        <p><strong>Roblox Group:</strong> ${groupLine}</p>
+        <p><strong>Verified Role:</strong> ${verifiedRoleLine}</p>
+        <p><strong>Rank Roles:</strong></p>
+        <ul style="margin-top:4px;">${rankRolesHtml}</ul>
+      </div>
+
+      <p style="color:#888; font-size:14px;">Editing from here is coming in the next step — for now, <code>/robloxsetup</code> in Discord still works.</p>
+      <a href="/dashboard" style="color:#5865F2;">← Back to servers</a>
+    `;
+
+    res.send(renderPage(body));
+  } catch (error) {
+    logger.error('Dashboard server page error:', error);
     res.status(500).send('Something went wrong.');
   }
 });
