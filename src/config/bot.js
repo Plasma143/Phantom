@@ -42,7 +42,7 @@ export const botConfig = {
     activities: [
       {
         // Text users will see (example: "Playing /help | Titan Bot").
-        name: "Star wars Ilum",
+        name: "Phantom Studios",
         // Activity type number (0 = Playing).
         type: 0, 
       },
