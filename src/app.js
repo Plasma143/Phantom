@@ -13,6 +13,7 @@ import { checkBirthdays } from './services/birthdayService.js';
 import { checkGiveaways } from './services/giveawayService.js';
 import { loadCommands, registerCommands as registerSlashCommands } from './handlers/commandLoader.js';
 import { robloxOAuthRouter } from './web/robloxOAuth.js';
+import { dashboardAuthRouter } from './web/dashboardAuth.js';
 
 class TitanBot extends Client {
   constructor() {
