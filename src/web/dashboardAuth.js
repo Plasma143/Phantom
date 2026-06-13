@@ -4,14 +4,16 @@
 //   /dashboard/login         -> redirects to Discord's OAuth consent screen
 //   /dashboard/auth/callback -> exchanges the code, fetches the user, sets a cookie
 //   /dashboard                -> shows the servers you can manage with R2-D2
-//   /dashboard/server/:id     -> view that server's Roblox setup (read-only for now)
+//   /dashboard/server/:id     -> view + edit that server's Roblox setup
 //
-// Editing (a form that saves changes) gets added to the server page next.
+// The save logic here mirrors /robloxsetup's group, verifiedrole, and
+// rankrole subcommands — same validation, same updateGuildConfig calls.
 
 import { Router } from 'express';
+import express from 'express';
 import crypto from 'crypto';
 import { logger } from '../utils/logger.js';
-import { getConfigValue } from '../services/guildConfig.js';
+import { getConfigValue, updateGuildConfig } from '../services/guildConfig.js';
 import { db } from '../utils/database.js';
 import { getRobloxGroupInfo } from '../utils/roblox.js';
 
@@ -26,6 +28,10 @@ const PERM_ADMINISTRATOR = 0x8n;
 const PERM_MANAGE_GUILD = 0x20n;
 
 export const dashboardAuthRouter = Router();
+
+// Parse form submissions (built into Express — no new dependency).
+// Scoped to this router only, so it doesn't affect anything else.
+dashboardAuthRouter.use(express.urlencoded({ extended: true }));
 
 // ---- Tiny manual cookie helpers (avoids adding cookie-parser as a dependency) ----
 
@@ -125,6 +131,10 @@ async function requireGuildAccess(req, res, guildId) {
 
   return { token, guild };
 }
+
+// Shared input styling for form fields.
+const fieldStyle = 'padding:8px; border-radius:6px; background:#1e1f22; color:#fff; border:1px solid #444;';
+const buttonStyle = 'padding:8px 16px; background:#5865F2; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer;';
 
 // ---- Routes ----
 
@@ -262,7 +272,7 @@ dashboardAuthRouter.get('/dashboard', async (req, res) => {
   }
 });
 
-// Step 4: view one server's Roblox setup (read-only for now).
+// Step 4: view + edit one server's Roblox setup.
 dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
   const { guildId } = req.params;
 
@@ -279,38 +289,92 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
       getConfigValue({ db }, guildId, 'roblox', {}),
     ]);
 
-    const roles = rolesRes.ok ? await rolesRes.json() : [];
-    const roleMap = new Map(roles.map((r) => [r.id, r.name]));
+    const allRoles = rolesRes.ok ? await rolesRes.json() : [];
+    const roleMap = new Map(allRoles.map((r) => [r.id, r.name]));
     const roleName = (id) => (id ? roleMap.get(id) || `Unknown role (${id})` : null);
+
+    // Roles people can actually pick — everyone's @everyone role has the
+    // same id as the guild itself, so exclude that one.
+    const assignableRoles = allRoles
+      .filter((r) => r.id !== guildId)
+      .sort((a, b) => b.position - a.position);
+
+    const roleOptions = (selectedId) =>
+      assignableRoles
+        .map((r) => `<option value="${r.id}" ${r.id === selectedId ? 'selected' : ''}>${r.name}</option>`)
+        .join('');
 
     let groupLine = '<em>Not set</em>';
     if (roblox.groupId) {
       const group = await getRobloxGroupInfo(roblox.groupId);
       groupLine = group
-        ? `<strong>${group.name}</strong> (ID: ${roblox.groupId})`
-        : `Group ID ${roblox.groupId} (couldn't load name)`;
+        ? `Currently: <strong>${group.name}</strong> (ID: ${roblox.groupId})`
+        : `Currently: Group ID ${roblox.groupId} (couldn't load name)`;
     }
-
-    const verifiedRoleLine = roblox.verifiedRole ? roleName(roblox.verifiedRole) : '<em>Not set</em>';
 
     const rankRoleEntries = Object.entries(roblox.rankRoles || {});
     const rankRolesHtml = rankRoleEntries.length
-      ? rankRoleEntries.map(([rank, roleId]) => `<li>Rank ${rank} → ${roleName(roleId)}</li>`).join('')
-      : '<li><em>None set</em></li>';
+      ? rankRoleEntries
+          .map(
+            ([rank, roleId]) => `
+              <li style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span>Rank ${rank} → ${roleName(roleId)}</span>
+                <form method="POST" action="/dashboard/server/${guildId}/rank-roles/remove" style="margin:0;">
+                  <input type="hidden" name="rank" value="${rank}" />
+                  <button type="submit" style="background:none; border:none; color:#ed4245; cursor:pointer; font-size:13px;">Remove</button>
+                </form>
+              </li>
+            `,
+          )
+          .join('')
+      : '<li style="color:#888;"><em>None set</em></li>';
+
+    let banner = '';
+    if (req.query.success) {
+      banner = `<p style="background:#2b3d2f; color:#3ba55c; padding:10px; border-radius:6px; max-width:480px; margin:0 auto 16px;">✅ ${req.query.success}</p>`;
+    } else if (req.query.error) {
+      banner = `<p style="background:#3d2b2b; color:#ed4245; padding:10px; border-radius:6px; max-width:480px; margin:0 auto 16px;">❌ ${req.query.error}</p>`;
+    }
 
     const body = `
       <img src="${guildIconUrl(guild)}" width="64" style="border-radius:50%; margin-bottom:12px;" />
       <h2 style="margin-top:0;">${guild.name}</h2>
+      ${banner}
 
-      <div style="max-width:480px; margin:24px auto; text-align:left; background:#2b2d31; padding:24px; border-radius:10px;">
-        <p><strong>Roblox Group:</strong> ${groupLine}</p>
-        <p><strong>Verified Role:</strong> ${verifiedRoleLine}</p>
-        <p><strong>Rank Roles:</strong></p>
-        <ul style="margin-top:4px;">${rankRolesHtml}</ul>
+      <div style="max-width:480px; margin:0 auto; text-align:left; background:#2b2d31; padding:24px; border-radius:10px;">
+
+        <p style="font-weight:bold; margin-bottom:4px;">Roblox Group</p>
+        <p style="color:#aaa; font-size:14px; margin-top:0;">${groupLine}</p>
+        <form method="POST" action="/dashboard/server/${guildId}/group" style="display:flex; gap:8px;">
+          <input type="text" name="groupId" value="${roblox.groupId || ''}" placeholder="Roblox Group ID" style="flex:1; ${fieldStyle}" />
+          <button type="submit" style="${buttonStyle}">Save</button>
+        </form>
+
+        <p style="font-weight:bold; margin-top:24px; margin-bottom:4px;">Verified Role</p>
+        <p style="color:#aaa; font-size:14px; margin-top:0;">Given to everyone once they link their Roblox account.</p>
+        <form method="POST" action="/dashboard/server/${guildId}/verified-role">
+          <select name="roleId" onchange="this.form.submit()" style="width:100%; ${fieldStyle}">
+            <option value="" ${!roblox.verifiedRole ? 'selected' : ''}>— None —</option>
+            ${roleOptions(roblox.verifiedRole)}
+          </select>
+        </form>
+
+        <p style="font-weight:bold; margin-top:24px; margin-bottom:4px;">Rank Roles</p>
+        <p style="color:#aaa; font-size:14px; margin-top:0;">Maps a Roblox group rank to a Discord role.</p>
+        <ul style="list-style:none; padding:0; margin:0 0 12px;">${rankRolesHtml}</ul>
+
+        <form method="POST" action="/dashboard/server/${guildId}/rank-roles" style="display:flex; gap:8px;">
+          <input type="number" name="rank" min="0" max="255" placeholder="Rank #" style="width:80px; ${fieldStyle}" required />
+          <select name="roleId" style="flex:1; ${fieldStyle}" required>
+            <option value="" disabled selected>Select a role</option>
+            ${roleOptions(null)}
+          </select>
+          <button type="submit" style="${buttonStyle}">Add</button>
+        </form>
+
       </div>
 
-      <p style="color:#888; font-size:14px;">Editing from here is coming in the next step — for now, <code>/robloxsetup</code> in Discord still works.</p>
-      <a href="/dashboard" style="color:#5865F2;">← Back to servers</a>
+      <p style="margin-top:24px;"><a href="/dashboard" style="color:#5865F2;">← Back to servers</a></p>
     `;
 
     res.send(renderPage(body));
@@ -318,4 +382,77 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
     logger.error('Dashboard server page error:', error);
     res.status(500).send('Something went wrong.');
   }
+});
+
+// ---- Save handlers (mirror /robloxsetup's group, verifiedrole, rankrole) ----
+
+dashboardAuthRouter.post('/dashboard/server/:guildId/group', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const groupId = (req.body.groupId || '').trim();
+
+  if (!/^\d+$/.test(groupId)) {
+    return res.redirect(`/dashboard/server/${guildId}?error=Group+ID+must+be+a+number`);
+  }
+
+  const group = await getRobloxGroupInfo(groupId);
+  if (!group) {
+    return res.redirect(`/dashboard/server/${guildId}?error=Roblox+group+not+found`);
+  }
+
+  const current = await getConfigValue({ db }, guildId, 'roblox', {});
+  await updateGuildConfig({ db }, guildId, { roblox: { ...current, enabled: true, groupId } });
+
+  res.redirect(`/dashboard/server/${guildId}?success=Group+updated`);
+});
+
+dashboardAuthRouter.post('/dashboard/server/:guildId/verified-role', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const roleId = req.body.roleId || null;
+
+  const current = await getConfigValue({ db }, guildId, 'roblox', {});
+  await updateGuildConfig({ db }, guildId, { roblox: { ...current, verifiedRole: roleId } });
+
+  res.redirect(`/dashboard/server/${guildId}?success=Verified+role+updated`);
+});
+
+dashboardAuthRouter.post('/dashboard/server/:guildId/rank-roles', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const rank = Number(req.body.rank);
+  const roleId = req.body.roleId;
+
+  if (!Number.isInteger(rank) || rank < 0 || rank > 255 || !roleId) {
+    return res.redirect(`/dashboard/server/${guildId}?error=Invalid+rank+or+role`);
+  }
+
+  const current = await getConfigValue({ db }, guildId, 'roblox', {});
+  const rankRoles = { ...(current.rankRoles || {}), [rank]: roleId };
+
+  await updateGuildConfig({ db }, guildId, { roblox: { ...current, rankRoles } });
+
+  res.redirect(`/dashboard/server/${guildId}?success=Rank+role+added`);
+});
+
+dashboardAuthRouter.post('/dashboard/server/:guildId/rank-roles/remove', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const { rank } = req.body;
+
+  const current = await getConfigValue({ db }, guildId, 'roblox', {});
+  const rankRoles = { ...(current.rankRoles || {}) };
+  delete rankRoles[rank];
+
+  await updateGuildConfig({ db }, guildId, { roblox: { ...current, rankRoles } });
+
+  res.redirect(`/dashboard/server/${guildId}?success=Rank+role+removed`);
 });
