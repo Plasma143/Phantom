@@ -1,4 +1,4 @@
-﻿import 'dotenv/config';
+import 'dotenv/config';
 import { Client, Collection, GatewayIntentBits } from 'discord.js';
 import { REST } from '@discordjs/rest';
 import express from 'express';
@@ -59,13 +59,13 @@ class TitanBot extends Client {
       const dbStatus = this.db.getStatus();
       if (dbStatus.isDegraded) {
         logger.warn('');
-        logger.warn('╔═══════════════════════════════════════════════════════╗');
+        logger.warn('╔══════════════════════════════════════════════════════╗');
         logger.warn('║ ⚠️  DATABASE RUNNING IN DEGRADED MODE                 ║');
         logger.warn('║                                                       ║');
         logger.warn('║ Connection: In-Memory Storage (PostgreSQL unavailable)║');
         logger.warn('║ Data Persistence: DISABLED - data lost on restart    ║');
         logger.warn('║ Action Required: Fix PostgreSQL and restart bot      ║');
-        logger.warn('╚═══════════════════════════════════════════════════════╝');
+        logger.warn('╚══════════════════════════════════════════════════════╝');
         logger.warn('');
       } else {
         startupLog(`✅ Database Status: ${dbStatus.connectionType} (fully operational)`);
@@ -108,6 +108,7 @@ class TitanBot extends Client {
   startWebServer() {
     const app = express();
     app.use(robloxOAuthRouter);
+    app.use(dashboardAuthRouter);
     const configuredPort = Number(this.config.api?.port || process.env.PORT || 3000);
     const maxPortRetryAttempts = Number(process.env.PORT_RETRY_ATTEMPTS || 5);
     const host = process.env.WEB_HOST || '0.0.0.0';
