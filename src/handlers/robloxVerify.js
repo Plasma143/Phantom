@@ -8,6 +8,7 @@
 //   modal submit          -> looks up the account, shows a one-time code
 //   "Confirm" button      -> checks the bio for that code, links + syncs roles
 //   "Update" button       -> re-syncs roles/nickname for an already-linked user
+//   "Sign in with Roblox" -> shows a link button that starts the OAuth login flow
 
 import {
   MessageFlags,
@@ -34,8 +35,13 @@ import { botConfig } from '../config/bot.js';
 export const ROBLOX_LINK_BUTTON_ID = 'roblox_link_start';
 export const ROBLOX_CONFIRM_BUTTON_ID = 'roblox_link_confirm';
 export const ROBLOX_UPDATE_BUTTON_ID = 'roblox_link_update';
+export const ROBLOX_OAUTH_BUTTON_ID = 'roblox_oauth_start';
 export const USERNAME_MODAL_ID = 'roblox_username_modal';
 export const USERNAME_INPUT_ID = 'roblox_username_input';
+
+// Base URL of this bot's web server (Railway's public domain).
+// Override with the PUBLIC_URL env var if the domain ever changes.
+const PUBLIC_URL = process.env.PUBLIC_URL || 'https://r2-d2-production.up.railway.app';
 
 // Tracks in-progress links: discordId -> { robloxId, robloxUsername, code }
 // Resets on restart — fine, codes are only needed briefly.
@@ -91,6 +97,38 @@ export async function handleRobloxLinkButton(interaction, client) {
       userId: interaction.user.id,
     });
     await handleInteractionError(interaction, error, { command: 'roblox_link', action: 'show_modal' });
+  }
+}
+
+// "Sign in with Roblox" button — replies with a link button that starts
+// the OAuth login flow on the bot's web server.
+export async function handleRobloxOAuthButton(interaction, client) {
+  try {
+    const url = `${PUBLIC_URL}/auth/roblox?discordId=${interaction.user.id}`;
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setLabel('Sign in with Roblox')
+        .setStyle(ButtonStyle.Link)
+        .setURL(url),
+    );
+
+    await interaction.reply({
+      embeds: [successEmbed(
+        "Sign in with Roblox",
+        "Click the button below to log in with your Roblox account in your browser.\n\n" +
+          "This option is still in testing and may only work for a few people until Roblox approves it — " +
+          "if it doesn't work, use **Link Roblox** instead.",
+      )],
+      components: [row],
+      flags: MessageFlags.Ephemeral,
+    });
+  } catch (error) {
+    logger.error('Error in Roblox OAuth button handler', {
+      error: error.message,
+      userId: interaction.user.id,
+    });
+    await handleInteractionError(interaction, error, { command: 'roblox_oauth', action: 'show_link' });
   }
 }
 
