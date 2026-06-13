@@ -1,12 +1,11 @@
 // src/web/dashboardAuth.js
 //
-// Web dashboard — "Login with Discord" flow.
+// Web dashboard — "Login with Discord" flow + server picker.
 //   /dashboard/login         -> redirects to Discord's OAuth consent screen
 //   /dashboard/auth/callback -> exchanges the code, fetches the user, sets a cookie
-//   /dashboard                -> placeholder landing page (shows who's logged in)
+//   /dashboard                -> shows the servers you can manage with R2-D2
 //
-// More pages (server list, per-server settings) get added to this same
-// dashboard area in later steps.
+// Per-server settings pages get added at /dashboard/server/:id in the next step.
 
 import { Router } from 'express';
 import crypto from 'crypto';
@@ -17,6 +16,10 @@ const REDIRECT_URI = `${PUBLIC_URL}/dashboard/auth/callback`;
 
 const CLIENT_ID = process.env.DASHBOARD_CLIENT_ID;
 const CLIENT_SECRET = process.env.DASHBOARD_CLIENT_SECRET;
+const BOT_TOKEN = process.env.DISCORD_TOKEN;
+
+const PERM_ADMINISTRATOR = 0x8n;
+const PERM_MANAGE_GUILD = 0x20n;
 
 export const dashboardAuthRouter = Router();
 
@@ -46,6 +49,42 @@ function setCookie(res, name, value, maxAgeSeconds) {
 
 function clearCookie(res, name) {
   res.append('Set-Cookie', `${name}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
+}
+
+// ---- Page shell ----
+
+function renderPage(bodyHtml) {
+  return `
+    <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>R2-D2 Dashboard</title>
+      </head>
+      <body style="font-family: sans-serif; text-align: center; padding: 60px 20px; background:#1e1f22; color:#fff; margin:0;">
+        <h1 style="margin-bottom:24px;">R2-D2 Dashboard</h1>
+        ${bodyHtml}
+      </body>
+    </html>
+  `;
+}
+
+function loginPrompt(message) {
+  return renderPage(`
+    <p>${message}</p>
+    <a href="/dashboard/login" style="display:inline-block; padding:12px 24px; background:#5865F2; color:#fff; border-radius:8px; text-decoration:none; font-weight:bold;">Login with Discord</a>
+  `);
+}
+
+function canManage(guild) {
+  if (guild.owner) return true;
+  const perms = BigInt(guild.permissions || 0);
+  return (perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR || (perms & PERM_MANAGE_GUILD) === PERM_MANAGE_GUILD;
+}
+
+function guildIconUrl(guild) {
+  return guild.icon
+    ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png`
+    : 'https://cdn.discordapp.com/embed/avatars/0.png';
 }
 
 // ---- Routes ----
@@ -110,46 +149,74 @@ dashboardAuthRouter.get('/dashboard/auth/callback', async (req, res) => {
   }
 });
 
-// Step 3 (placeholder for now): show who's logged in.
+// Step 3: show the servers this user can manage with R2-D2.
 dashboardAuthRouter.get('/dashboard', async (req, res) => {
   const token = getCookie(req, 'dashboard_token');
 
   if (!token) {
-    return res.send(`
-      <html>
-        <body style="font-family: sans-serif; text-align: center; padding: 60px; background:#1e1f22; color:#fff;">
-          <h1>R2-D2 Dashboard</h1>
-          <p>Log in with Discord to manage your server's settings.</p>
-          <a href="/dashboard/login" style="display:inline-block; padding:12px 24px; background:#5865F2; color:#fff; border-radius:8px; text-decoration:none; font-weight:bold;">Login with Discord</a>
-        </body>
-      </html>
-    `);
+    return res.send(loginPrompt("Log in with Discord to manage your server's settings."));
   }
 
   try {
-    const userRes = await fetch('https://discord.com/api/users/@me', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const [userRes, userGuildsRes, botGuildsRes] = await Promise.all([
+      fetch('https://discord.com/api/users/@me', {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      fetch('https://discord.com/api/users/@me/guilds', {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      fetch('https://discord.com/api/users/@me/guilds', {
+        headers: { Authorization: `Bot ${BOT_TOKEN}` },
+      }),
+    ]);
 
     if (!userRes.ok) {
       clearCookie(res, 'dashboard_token');
-      return res.redirect('/dashboard');
+      return res.send(loginPrompt('Your session expired — please log in again.'));
     }
 
     const user = await userRes.json();
+    const userGuilds = userGuildsRes.ok ? await userGuildsRes.json() : [];
+    const botGuilds = botGuildsRes.ok ? await botGuildsRes.json() : [];
+    const botGuildIds = new Set(botGuilds.map((g) => g.id));
+
+    const manageable = userGuilds.filter((g) => botGuildIds.has(g.id) && canManage(g));
+
     const avatarUrl = user.avatar
       ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png`
-      : `https://cdn.discordapp.com/embed/avatars/0.png`;
+      : 'https://cdn.discordapp.com/embed/avatars/0.png';
 
-    res.send(`
-      <html>
-        <body style="font-family: sans-serif; text-align: center; padding: 60px; background:#1e1f22; color:#fff;">
-          <h1>R2-D2 Dashboard</h1>
-          <img src="${avatarUrl}" width="80" style="border-radius:50%; margin-bottom:16px;" />
-          <p>✅ Logged in as <strong>${user.username}</strong></p>
-        </body>
-      </html>
-    `);
+    const header = `
+      <img src="${avatarUrl}" width="64" style="border-radius:50%; margin-bottom:12px;" />
+      <p>Logged in as <strong>${user.username}</strong></p>
+    `;
+
+    let body;
+    if (manageable.length === 0) {
+      body = `
+        ${header}
+        <p style="margin-top:32px; color:#aaa;">No servers found where you have <strong>Manage Server</strong> permission and R2-D2 is present.</p>
+      `;
+    } else {
+      const items = manageable
+        .map(
+          (g) => `
+            <a href="/dashboard/server/${g.id}" style="display:flex; align-items:center; gap:14px; padding:14px 18px; background:#2b2d31; border-radius:10px; text-decoration:none; color:#fff; margin-bottom:10px; font-weight:600;">
+              <img src="${guildIconUrl(g)}" width="40" height="40" style="border-radius:50%;" />
+              <span>${g.name}</span>
+            </a>
+          `,
+        )
+        .join('');
+
+      body = `
+        ${header}
+        <p style="margin-top:24px; margin-bottom:16px; color:#aaa;">Choose a server to manage:</p>
+        <div style="max-width:420px; margin:0 auto; text-align:left;">${items}</div>
+      `;
+    }
+
+    res.send(renderPage(body));
   } catch (error) {
     logger.error('Dashboard error:', error);
     res.status(500).send('Something went wrong.');
