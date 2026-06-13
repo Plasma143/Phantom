@@ -44,6 +44,15 @@ const VerificationConfigSchema = z
   })
   .optional();
 
+const RobloxConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    groupId: z.string().nullable().optional(),
+    verifiedRole: z.string().nullable().optional(),
+    rankRoles: z.record(z.string()).default({})
+  })
+  .optional();
+
 export const GuildConfigSchema = z
   .object({
     prefix: z.string().optional(),
@@ -62,7 +71,8 @@ export const GuildConfigSchema = z
     logging: LoggingConfigSchema.optional(),
     ticketLogging: TicketLoggingSchema.optional(),
     enableLogging: z.boolean().optional(),
-    verification: VerificationConfigSchema
+    verification: VerificationConfigSchema,
+    roblox: RobloxConfigSchema
   })
   .passthrough();
 
@@ -123,5 +133,3 @@ export function validateGuildConfigOrThrow(rawConfig, context = {}) {
     }
   );
 }
-
-
