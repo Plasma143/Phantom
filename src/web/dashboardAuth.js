@@ -3,6 +3,7 @@
 // Web dashboard — "Login with Discord" flow + server picker + settings page.
 //   /dashboard/login         -> redirects to Discord's OAuth consent screen
 //   /dashboard/auth/callback -> exchanges the code, fetches the user, sets a cookie
+//   /dashboard/logout         -> clears the session cookie
 //   /dashboard                -> shows the servers you can manage with R2-D2
 //   /dashboard/server/:id     -> view + edit that server's Roblox setup
 //
@@ -32,6 +33,9 @@ export const dashboardAuthRouter = Router();
 // Parse form submissions (built into Express — no new dependency).
 // Scoped to this router only, so it doesn't affect anything else.
 dashboardAuthRouter.use(express.urlencoded({ extended: true }));
+
+// Quietly avoid a 404 in the browser console for favicon requests.
+dashboardAuthRouter.get('/favicon.ico', (req, res) => res.status(204).end());
 
 // ---- Tiny manual cookie helpers (avoids adding cookie-parser as a dependency) ----
 
@@ -63,16 +67,42 @@ function clearCookie(res, name) {
 
 // ---- Page shell ----
 
-function renderPage(bodyHtml) {
+function renderPage(bodyHtml, user = null) {
+  const navUser = user
+    ? `
+      <div style="display:flex; align-items:center; gap:10px;">
+        <img src="${avatarUrl(user)}" width="28" height="28" style="border-radius:50%;" />
+        <span style="font-size:14px;">${user.username}</span>
+        <a href="/dashboard/logout" style="color:#aaa; font-size:13px; text-decoration:none; border:1px solid #444; padding:4px 10px; border-radius:6px;">Logout</a>
+      </div>
+    `
+    : '';
+
   return `
     <html>
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>R2-D2 Dashboard</title>
+        <style>
+          * { box-sizing: border-box; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+          a { transition: opacity 0.15s; }
+          a:hover { opacity: 0.75; }
+          button { transition: opacity 0.15s, transform 0.05s; cursor: pointer; }
+          button:hover { opacity: 0.9; }
+          button:active { transform: scale(0.98); }
+          select, input { transition: border-color 0.15s; }
+          select:hover, input:hover, select:focus, input:focus { border-color: #5865F2; outline: none; }
+        </style>
       </head>
-      <body style="font-family: sans-serif; text-align: center; padding: 60px 20px; background:#1e1f22; color:#fff; margin:0;">
-        <h1 style="margin-bottom:24px;">R2-D2 Dashboard</h1>
-        ${bodyHtml}
+      <body style="margin:0; background:#1e1f22; color:#fff; font-size:16px;">
+        <div style="background:#2b2d31; padding:14px 24px; display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; align-items:center; border-bottom:1px solid #1e1f22;">
+          <a href="/dashboard" style="color:#fff; text-decoration:none; font-weight:bold; font-size:18px;">R2-D2 Dashboard</a>
+          ${navUser}
+        </div>
+        <div style="padding:40px 20px; text-align:center;">
+          ${bodyHtml}
+        </div>
       </body>
     </html>
   `;
@@ -83,6 +113,12 @@ function loginPrompt(message) {
     <p>${message}</p>
     <a href="/dashboard/login" style="display:inline-block; padding:12px 24px; background:#5865F2; color:#fff; border-radius:8px; text-decoration:none; font-weight:bold;">Login with Discord</a>
   `);
+}
+
+function avatarUrl(user) {
+  return user.avatar
+    ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png`
+    : 'https://cdn.discordapp.com/embed/avatars/0.png';
 }
 
 function canManage(guild) {
@@ -108,33 +144,44 @@ async function requireGuildAccess(req, res, guildId) {
     return null;
   }
 
-  const userGuildsRes = await fetch('https://discord.com/api/users/@me/guilds', {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const [userRes, userGuildsRes] = await Promise.all([
+    fetch('https://discord.com/api/users/@me', {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+    fetch('https://discord.com/api/users/@me/guilds', {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+  ]);
 
-  if (!userGuildsRes.ok) {
+  if (!userRes.ok || !userGuildsRes.ok) {
     clearCookie(res, 'dashboard_token');
     res.send(loginPrompt('Your session expired — please log in again.'));
     return null;
   }
 
+  const user = await userRes.json();
   const userGuilds = await userGuildsRes.json();
   const guild = userGuilds.find((g) => g.id === guildId);
 
   if (!guild || !canManage(guild)) {
-    res.status(403).send(renderPage(`
-      <p>You don't have permission to manage this server.</p>
-      <a href="/dashboard" style="color:#5865F2;">← Back to servers</a>
-    `));
+    res.status(403).send(
+      renderPage(
+        `
+        <p>You don't have permission to manage this server.</p>
+        <a href="/dashboard" style="color:#5865F2;">← Back to servers</a>
+      `,
+        user,
+      ),
+    );
     return null;
   }
 
-  return { token, guild };
+  return { token, user, guild };
 }
 
 // Shared input styling for form fields.
 const fieldStyle = 'padding:8px; border-radius:6px; background:#1e1f22; color:#fff; border:1px solid #444;';
-const buttonStyle = 'padding:8px 16px; background:#5865F2; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer;';
+const buttonStyle = 'padding:8px 16px; background:#5865F2; color:#fff; border:none; border-radius:6px; font-weight:bold;';
 
 // ---- Routes ----
 
@@ -198,6 +245,12 @@ dashboardAuthRouter.get('/dashboard/auth/callback', async (req, res) => {
   }
 });
 
+// Log out — clears the session cookie.
+dashboardAuthRouter.get('/dashboard/logout', (req, res) => {
+  clearCookie(res, 'dashboard_token');
+  res.redirect('/dashboard');
+});
+
 // Step 3: show the servers this user can manage with R2-D2.
 dashboardAuthRouter.get('/dashboard', async (req, res) => {
   const token = getCookie(req, 'dashboard_token');
@@ -219,33 +272,21 @@ dashboardAuthRouter.get('/dashboard', async (req, res) => {
       }),
     ]);
 
-    if (!userRes.ok) {
+    if (!userRes.ok || !userGuildsRes.ok) {
       clearCookie(res, 'dashboard_token');
       return res.send(loginPrompt('Your session expired — please log in again.'));
     }
 
     const user = await userRes.json();
-    const userGuilds = userGuildsRes.ok ? await userGuildsRes.json() : [];
+    const userGuilds = await userGuildsRes.json();
     const botGuilds = botGuildsRes.ok ? await botGuildsRes.json() : [];
     const botGuildIds = new Set(botGuilds.map((g) => g.id));
 
     const manageable = userGuilds.filter((g) => botGuildIds.has(g.id) && canManage(g));
 
-    const avatarUrl = user.avatar
-      ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png`
-      : 'https://cdn.discordapp.com/embed/avatars/0.png';
-
-    const header = `
-      <img src="${avatarUrl}" width="64" style="border-radius:50%; margin-bottom:12px;" />
-      <p>Logged in as <strong>${user.username}</strong></p>
-    `;
-
     let body;
     if (manageable.length === 0) {
-      body = `
-        ${header}
-        <p style="margin-top:32px; color:#aaa;">No servers found where you have <strong>Manage Server</strong> permission and R2-D2 is present.</p>
-      `;
+      body = `<p style="margin-top:12px; color:#aaa;">No servers found where you have <strong>Manage Server</strong> permission and R2-D2 is present.</p>`;
     } else {
       const items = manageable
         .map(
@@ -259,13 +300,13 @@ dashboardAuthRouter.get('/dashboard', async (req, res) => {
         .join('');
 
       body = `
-        ${header}
-        <p style="margin-top:24px; margin-bottom:16px; color:#aaa;">Choose a server to manage:</p>
+        <h2 style="margin-top:0;">Your Servers</h2>
+        <p style="color:#aaa; margin-bottom:20px;">Choose a server to manage:</p>
         <div style="max-width:420px; margin:0 auto; text-align:left;">${items}</div>
       `;
     }
 
-    res.send(renderPage(body));
+    res.send(renderPage(body, user));
   } catch (error) {
     logger.error('Dashboard error:', error);
     res.status(500).send('Something went wrong.');
@@ -280,7 +321,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
     const access = await requireGuildAccess(req, res, guildId);
     if (!access) return; // requireGuildAccess already sent a response
 
-    const { guild } = access;
+    const { guild, user } = access;
 
     const [rolesRes, roblox] = await Promise.all([
       fetch(`https://discord.com/api/guilds/${guildId}/roles`, {
@@ -321,7 +362,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
                 <span>Rank ${rank} → ${roleName(roleId)}</span>
                 <form method="POST" action="/dashboard/server/${guildId}/rank-roles/remove" style="margin:0;">
                   <input type="hidden" name="rank" value="${rank}" />
-                  <button type="submit" style="background:none; border:none; color:#ed4245; cursor:pointer; font-size:13px;">Remove</button>
+                  <button type="submit" style="background:none; border:none; color:#ed4245; font-size:13px;">Remove</button>
                 </form>
               </li>
             `,
@@ -337,6 +378,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
     }
 
     const body = `
+      <p style="margin-bottom:20px;"><a href="/dashboard" style="color:#5865F2; text-decoration:none;">← Back to servers</a></p>
       <img src="${guildIconUrl(guild)}" width="64" style="border-radius:50%; margin-bottom:12px;" />
       <h2 style="margin-top:0;">${guild.name}</h2>
       ${banner}
@@ -373,11 +415,9 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
         </form>
 
       </div>
-
-      <p style="margin-top:24px;"><a href="/dashboard" style="color:#5865F2;">← Back to servers</a></p>
     `;
 
-    res.send(renderPage(body));
+    res.send(renderPage(body, user));
   } catch (error) {
     logger.error('Dashboard server page error:', error);
     res.status(500).send('Something went wrong.');
