@@ -6,6 +6,7 @@ import { logger } from './logger.js';
 
 const USERS_API = 'https://users.roblox.com/v1';
 const GROUPS_API = 'https://groups.roblox.com/v2';
+const GROUPS_API_V1 = 'https://groups.roblox.com/v1';
 
 /**
  * Look up a Roblox user by their username.
@@ -94,4 +95,19 @@ export function generateVerificationCode() {
 export async function bioContainsCode(userId, code) {
   const info = await getRobloxUserInfo(userId);
   return typeof info?.description === 'string' && info.description.includes(code);
+}
+
+/**
+ * Get basic info about a Roblox group (name, description, member count, etc.)
+ * Returns null if the group doesn't exist.
+ */
+export async function getRobloxGroupInfo(groupId) {
+  try {
+    const res = await fetch(`${GROUPS_API_V1}/groups/${groupId}`);
+    if (!res.ok) return null;
+    return await res.json(); // { id, name, description, owner, memberCount, ... }
+  } catch (err) {
+    logger.error('Roblox API error (getRobloxGroupInfo):', err);
+    return null;
+  }
 }
