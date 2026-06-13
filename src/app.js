@@ -12,6 +12,7 @@ import { logger, startupLog, shutdownLog } from './utils/logger.js';
 import { checkBirthdays } from './services/birthdayService.js';
 import { checkGiveaways } from './services/giveawayService.js';
 import { loadCommands, registerCommands as registerSlashCommands } from './handlers/commandLoader.js';
+import { robloxOAuthRouter } from './web/robloxOAuth.js';
 
 class TitanBot extends Client {
   constructor() {
@@ -105,6 +106,7 @@ class TitanBot extends Client {
 
   startWebServer() {
     const app = express();
+    app.use(robloxOAuthRouter);
     const configuredPort = Number(this.config.api?.port || process.env.PORT || 3000);
     const maxPortRetryAttempts = Number(process.env.PORT_RETRY_ATTEMPTS || 5);
     const host = process.env.WEB_HOST || '0.0.0.0';
@@ -381,6 +383,3 @@ try {
 }
 
 export default TitanBot;
-
-
-
