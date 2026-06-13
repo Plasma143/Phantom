@@ -31,7 +31,6 @@ const CLIENT_SECRET = process.env.DASHBOARD_CLIENT_SECRET;
 const BOT_TOKEN = process.env.DISCORD_TOKEN;
 
 const PERM_ADMINISTRATOR = 0x8n;
-const PERM_MANAGE_GUILD = 0x20n;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const COMMANDS_DIR = path.join(__dirname, '../commands');
@@ -213,10 +212,13 @@ function avatarUrl(user) {
     : 'https://cdn.discordapp.com/embed/avatars/0.png';
 }
 
+// Dashboard access (viewing and editing a server's settings) is
+// restricted to Discord Administrators and the server owner — not just
+// anyone with "Manage Server".
 function canManage(guild) {
   if (guild.owner) return true;
   const perms = BigInt(guild.permissions || 0);
-  return (perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR || (perms & PERM_MANAGE_GUILD) === PERM_MANAGE_GUILD;
+  return (perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR;
 }
 
 function guildIconUrl(guild) {
