@@ -32,6 +32,25 @@ export default {
         ),
     )
     .addSubcommand((sub) =>
+      sub
+        .setName('rankrole')
+        .setDescription('Map a Roblox group rank to a Discord role')
+        .addIntegerOption((opt) =>
+          opt
+            .setName('rank')
+            .setDescription("The Roblox rank number (0-255) — see your group's Manage > Roles page")
+            .setRequired(true)
+            .setMinValue(0)
+            .setMaxValue(255),
+        )
+        .addRoleOption((opt) =>
+          opt
+            .setName('role')
+            .setDescription('Discord role for members at this rank')
+            .setRequired(true),
+        ),
+    )
+    .addSubcommand((sub) =>
       sub.setName('view').setDescription("View this server's current Roblox setup"),
     ),
 
@@ -87,6 +106,29 @@ export default {
 
       return interaction.reply({
         embeds: [successEmbed('Verified Role Set', `Everyone who links their Roblox account will now get ${role}.`)],
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
+    if (sub === 'rankrole') {
+      const rank = interaction.options.getInteger('rank');
+      const role = interaction.options.getRole('role');
+
+      const currentRoblox = await getConfigValue(client, guildId, 'roblox', {});
+      if (!currentRoblox.groupId) {
+        return interaction.reply({
+          embeds: [errorEmbed('Set Up a Group First', 'Run `/robloxsetup group` before mapping rank roles.')],
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      const rankRoles = { ...(currentRoblox.rankRoles || {}), [rank]: role.id };
+      await updateGuildConfig(client, guildId, {
+        roblox: { ...currentRoblox, rankRoles },
+      });
+
+      return interaction.reply({
+        embeds: [successEmbed('Rank Role Set', `Roblox rank **${rank}** will now map to ${role}. Run this again with a different rank to add more.`)],
         flags: MessageFlags.Ephemeral,
       });
     }
