@@ -1,12 +1,18 @@
 // utils/roblox.js
-// Helper functions for talking to Roblox's public web APIs.
-// No API key needed for any of these — they're public read endpoints.
+// Helper functions for talking to Roblox's APIs.
+//
+// Most of these are public read endpoints — no API key needed. The three
+// at the bottom (getGroupRoles, getGroupMembership, updateGroupMemberRank)
+// use Roblox's Open Cloud API and require a ROBLOX_OPEN_CLOUD_API_KEY env
+// var with group:read (+ group:write for updateGroupMemberRank), created by
+// an account that has permission to rank members in that group.
 
 import { logger } from './logger.js';
 
 const USERS_API = 'https://users.roblox.com/v1';
 const GROUPS_API = 'https://groups.roblox.com/v2';
 const GROUPS_API_V1 = 'https://groups.roblox.com/v1';
+const OPEN_CLOUD_API = 'https://apis.roblox.com/cloud/v2';
 
 /**
  * Look up a Roblox user by their username.
@@ -99,7 +105,7 @@ export async function bioContainsCode(userId, code) {
 
 /**
  * Get basic info about a Roblox group (name, description, member count, etc.)
- * Returns null if the group doesn't exist.
+ * Returns null if the group doesn't exist. Public endpoint, no key needed.
  */
 export async function getRobloxGroupInfo(groupId) {
   try {
@@ -109,5 +115,118 @@ export async function getRobloxGroupInfo(groupId) {
   } catch (err) {
     logger.error('Roblox API error (getRobloxGroupInfo):', err);
     return null;
+  }
+}
+
+// ---- Open Cloud: rank management (requires ROBLOX_OPEN_CLOUD_API_KEY) ----
+
+/**
+ * Get every role in a group via Open Cloud — { id, rank, displayName, ... },
+ * sorted by rank (handles pagination internally). Returns null on error
+ * (e.g. missing/invalid API key).
+ */
+export async function getGroupRoles(groupId) {
+  const apiKey = process.env.ROBLOX_OPEN_CLOUD_API_KEY;
+  let roles = [];
+  let pageToken = '';
+
+  try {
+    do {
+      const url = `${OPEN_CLOUD_API}/groups/${groupId}/roles?maxPageSize=20${pageToken ? `&pageToken=${pageToken}` : ''}`;
+      const res = await fetch(url, { headers: { 'x-api-key': apiKey } });
+
+      if (!res.ok) {
+        logger.error(`Open Cloud roles lookup failed: ${res.status}`);
+        return null;
+      }
+
+      const data = await res.json();
+      roles = roles.concat(data.groupRoles ?? []);
+      pageToken = data.nextPageToken ?? '';
+    } while (pageToken);
+
+    return roles.sort((a, b) => a.rank - b.rank);
+  } catch (err) {
+    logger.error('Roblox API error (getGroupRoles):', err);
+    return null;
+  }
+}
+
+/**
+ * Get a Roblox user's current membership record in a group via Open Cloud
+ * (includes the `path` and `role` needed to update it). Returns null if
+ * they're not a member, or on error.
+ */
+export async function getGroupMembership(groupId, robloxUserId) {
+  const apiKey = process.env.ROBLOX_OPEN_CLOUD_API_KEY;
+  const filter = encodeURIComponent(`user=='users/${robloxUserId}'`);
+  const url = `${OPEN_CLOUD_API}/groups/${groupId}/memberships?filter=${filter}`;
+
+  try {
+    const res = await fetch(url, { headers: { 'x-api-key': apiKey } });
+    if (!res.ok) {
+      logger.error(`Open Cloud membership lookup failed: ${res.status}`);
+      return null;
+    }
+
+    const data = await res.json();
+    return data.groupMemberships?.[0] ?? null; // { path, user, role, ... }
+  } catch (err) {
+    logger.error('Roblox API error (getGroupMembership):', err);
+    return null;
+  }
+}
+
+/**
+ * Change a Roblox user's rank in a group via Open Cloud's "Update Group
+ * Membership" endpoint. `targetRank` is the rank number (0-255), not a
+ * role ID — this looks up the matching role for you.
+ *
+ * Returns { success: true } or { success: false, error: '...' }.
+ */
+export async function updateGroupMemberRank(groupId, robloxUserId, targetRank) {
+  const apiKey = process.env.ROBLOX_OPEN_CLOUD_API_KEY;
+
+  try {
+    const [membership, roles] = await Promise.all([
+      getGroupMembership(groupId, robloxUserId),
+      getGroupRoles(groupId),
+    ]);
+
+    if (!membership) {
+      return { success: false, error: 'User is not a member of this group.' };
+    }
+    if (!roles) {
+      return { success: false, error: 'Could not load group roles from Roblox.' };
+    }
+
+    const targetRole = roles.find((r) => r.rank === targetRank);
+    if (!targetRole) {
+      return { success: false, error: `No role found for rank ${targetRank}.` };
+    }
+
+    const res = await fetch(`${OPEN_CLOUD_API}/${membership.path}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      },
+      body: JSON.stringify({
+        path: membership.path,
+        role: `groups/${groupId}/roles/${targetRole.id}`,
+        user: `users/${robloxUserId}`,
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      logger.error(`Open Cloud rank update failed: ${res.status} ${text}`);
+      return { success: false, error: `Roblox rejected the update (HTTP ${res.status}).` };
+    }
+
+    return { success: true };
+  } catch (err) {
+    logger.error('Roblox API error (updateGroupMemberRank):', err);
+    return { success: false, error: 'Unexpected error contacting Roblox.' };
   }
 }
