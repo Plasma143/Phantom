@@ -3,6 +3,23 @@ import { logger } from '../utils/logger.js';
 
 export const botConfig = {
   // =========================
+  // ROBLOX INTEGRATION
+  // =========================
+  roblox: {
+    // Roblox group ID used for rank syncing — can fill this in later.
+    groupId: process.env.ROBLOX_GROUP_ID,
+
+    // Maps Roblox group ranks → Discord role IDs — can fill these in later too.
+    rankRoles: {
+      // 1: "123456789012345678",
+      // 50: "234567890123456789",
+    },
+
+    // Role given to everyone once linked, regardless of rank.
+    verifiedRole: null,
+  },
+
+  // =========================
   // BOT PRESENCE (what users see under the bot name)
   // =========================
   // `status` options:
@@ -543,7 +560,3 @@ export function getRandomColor() {
 }
 
 export default botConfig;
-
-
-
-
