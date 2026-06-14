@@ -32,9 +32,10 @@ export default {
 
       // Register globally using REST API directly — more reliable than client.application.commands.set()
       try {
+        const clientId = process.env.CLIENT_ID || '1515029322061054063';
         const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
         await rest.put(
-          Routes.applicationCommands(process.env.CLIENT_ID),
+          Routes.applicationCommands(clientId),
           { body: commands }
         );
         startupLog(`✅ Registered ${commands.length} commands globally`);
