@@ -22,7 +22,7 @@ import { logger } from '../utils/logger.js';
 import { getConfigValue, updateGuildConfig } from '../services/guildConfig.js';
 import { db } from '../utils/database.js';
 import { pgDb } from '../utils/postgresDatabase.js';
-import { getRobloxGroupInfo, getRobloxUserByUsername, getGroupRoles, getGroupMembership, updateGroupMemberRank } from '../utils/roblox.js';
+import { getRobloxGroupInfo, getRobloxUserByUsername, getGroupRoles, getGroupMembership, updateGroupMemberRank, getGroupJoinRequests, acceptGroupJoinRequest, declineGroupJoinRequest } from '../utils/roblox.js';
 import { getSubscription, getTier, getBoostDiscount, isOwner } from './stripePayments.js';
 
 const PUBLIC_URL = process.env.PUBLIC_URL || 'https://phantom1.up.railway.app';
@@ -796,6 +796,143 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
             <button type="submit" style="${buttonStyle}">Save Auto-Rank Settings</button>
           </form>
+
+          <hr style="border:none; border-top:1px solid #2b2d31; margin:28px 0;" />
+
+          <p style="font-weight:700; margin:0 0 4px; font-size:15px;">&#x1F4E8; Group Join Requests</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 16px; line-height:1.6;">
+            People waiting to join your Roblox group. When someone verifies their Roblox account with Phantom, they are <strong style="color:#57f287;">automatically accepted</strong> into the group. You can also manually manage pending requests here.
+          </p>
+          ${!isPremium ? `<div style="background:#1a0840; border:1px solid #5b21b6; border-radius:10px; padding:24px; margin-bottom:20px; text-align:center;"><p style="color:#c084fc; font-size:28px; margin:0 0 8px;">🔒</p><p style="color:#fff; font-weight:700; font-size:16px; margin:0 0 6px;">Premium Feature</p><p style="color:#a78bfa; font-size:13px; margin:0 0 16px;">Upgrade to manage group join requests and auto-accept members.</p><a href="/upgrade/${guildId}?plan=premium" style="display:inline-block; padding:10px 24px; background:#7c3aed; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; font-weight:600;">Upgrade — $7/mo</a></div>` : roblox.groupId && roblox.openCloudKey ? `
+          <div id="joinRequestsList" style="background:#111214; border:1px solid #2b2d31; border-radius:8px; padding:16px;">
+            <p style="color:#949ba4; font-size:13px; margin:0;" id="joinRequestsStatus">Loading join requests...</p>
+          </div>
+          <script>
+            var _jrRoles = [];
+
+            (async function loadJoinRequests() {
+              const container = document.getElementById('joinRequestsList');
+              try {
+                // Load roles and requests in parallel
+                const [rolesRes, reqRes] = await Promise.all([
+                  fetch('/dashboard/server/${guildId}/group-roles'),
+                  fetch('/dashboard/server/${guildId}/join-requests'),
+                ]);
+                const rolesData = await rolesRes.json();
+                const data = await reqRes.json();
+
+                _jrRoles = (rolesData.roles || []).filter(r => r.rank > 0);
+
+                if (!data.requests || data.requests.length === 0) {
+                  container.innerHTML = '<p style="color:#949ba4; font-size:13px; margin:0;">✅ No pending join requests.</p>';
+                  return;
+                }
+
+                const roleOptions = _jrRoles.map(r =>
+                  \`<option value="\${r.rank}">\${r.displayName}</option>\`
+                ).join('');
+
+                container.innerHTML = data.requests.map(req => \`
+                  <div style="padding:14px 0; border-bottom:1px solid #2b2d31;" data-userid="\${req.userId}" id="jr-\${req.userId}">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                      <div>
+                        <a href="https://www.roblox.com/users/\${req.userId}/profile" target="_blank"
+                           style="color:#c084fc; font-weight:600; font-size:14px; text-decoration:none;">\${req.username || req.userId}</a>
+                        <p style="color:#949ba4; font-size:12px; margin:2px 0 0;">ID: \${req.userId}</p>
+                      </div>
+                      <button onclick="toggleAcceptForm('\${req.userId}')"
+                        style="padding:6px 14px; background:#57f287; color:#000; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">
+                        Accept
+                      </button>
+                    </div>
+                    <div id="acceptForm-\${req.userId}" style="display:none; background:#1a1c1e; border:1px solid #2b2d31; border-radius:8px; padding:12px; margin-top:4px;">
+                      <p style="color:#fff; font-size:13px; font-weight:600; margin:0 0 10px;">Accept \${req.username || req.userId}</p>
+                      <p style="color:#949ba4; font-size:12px; margin:0 0 6px;">Assign Rank</p>
+                      <select id="rankSelect-\${req.userId}" style="width:100%; background:#111214; border:1px solid #2b2d31; color:#fff; padding:8px 10px; border-radius:6px; font-size:13px; margin-bottom:10px;">
+                        \${roleOptions}
+                      </select>
+                      <p style="color:#949ba4; font-size:12px; margin:0 0 6px;">Reason</p>
+                      <input id="reasonInput-\${req.userId}" type="text" placeholder="Accepted into group"
+                        style="width:100%; background:#111214; border:1px solid #2b2d31; color:#fff; padding:8px 10px; border-radius:6px; font-size:13px; box-sizing:border-box; margin-bottom:10px;" />
+                      <div style="display:flex; gap:8px;">
+                        <button onclick="submitAccept('\${req.userId}', '\${req.username || req.userId}')"
+                          style="flex:1; padding:8px; background:#5865F2; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">
+                          Confirm
+                        </button>
+                        <button onclick="document.getElementById('acceptForm-\${req.userId}').style.display='none'"
+                          style="padding:8px 14px; background:#2b2d31; color:#949ba4; border:none; border-radius:6px; font-size:13px; cursor:pointer;">
+                          Cancel
+                        </button>
+                        <button onclick="submitDecline('\${req.userId}')"
+                          style="padding:8px 14px; background:#ed4245; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">
+                          Decline
+                        </button>
+                      </div>
+                      <p id="jrMsg-\${req.userId}" style="font-size:12px; margin:8px 0 0; color:#949ba4;"></p>
+                    </div>
+                  </div>
+                \`).join('');
+              } catch(e) {
+                container.innerHTML = '<p style="color:#ed4245; font-size:13px; margin:0;">Failed to load join requests.</p>';
+              }
+            })();
+
+            function toggleAcceptForm(userId) {
+              const form = document.getElementById('acceptForm-' + userId);
+              form.style.display = form.style.display === 'none' ? 'block' : 'none';
+            }
+
+            async function submitAccept(userId, username) {
+              const rank   = document.getElementById('rankSelect-' + userId).value;
+              const reason = document.getElementById('reasonInput-' + userId).value.trim() || 'Accepted into group';
+              const msg    = document.getElementById('jrMsg-' + userId);
+              msg.textContent = 'Processing...';
+              msg.style.color = '#949ba4';
+              try {
+                const r = await fetch('/dashboard/server/${guildId}/join-requests/accept', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ userId, rank, reason, username }),
+                });
+                const d = await r.json();
+                if (d.success) {
+                  const row = document.getElementById('jr-' + userId);
+                  row.innerHTML = '<p style="color:#57f287; font-size:13px; padding:8px 0;">✅ ' + username + ' accepted and ranked to <strong>' + d.rankName + '</strong>.</p>';
+                } else {
+                  msg.textContent = d.error || 'Something went wrong.';
+                  msg.style.color = '#ed4245';
+                }
+              } catch(e) {
+                msg.textContent = 'Error contacting server.';
+                msg.style.color = '#ed4245';
+              }
+            }
+
+            async function submitDecline(userId) {
+              const msg = document.getElementById('jrMsg-' + userId);
+              msg.textContent = 'Declining...';
+              msg.style.color = '#949ba4';
+              try {
+                const r = await fetch('/dashboard/server/${guildId}/join-requests/decline', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ userId }),
+                });
+                const d = await r.json();
+                if (d.success) {
+                  const row = document.getElementById('jr-' + userId);
+                  row.innerHTML = '<p style="color:#ed4245; font-size:13px; padding:8px 0;">❌ Request declined.</p>';
+                } else {
+                  msg.textContent = d.error || 'Something went wrong.';
+                  msg.style.color = '#ed4245';
+                }
+              } catch(e) {
+                msg.textContent = 'Error.';
+                msg.style.color = '#ed4245';
+              }
+            }
+          </script>
+          ` : `<p style="color:#949ba4; padding:16px; background:#111214; border-radius:8px; border:1px solid #2b2d31; font-size:14px;">Configure your Group ID and Open Cloud API key above to manage join requests.</p>`}
         </div>
 
         <div id="tab-audit-logs" style="display:none; ${PANEL}">
@@ -1155,6 +1292,126 @@ dashboardAuthRouter.get('/dashboard/server/:guildId/auto-bind-roles', async (req
   } catch (err) {
     logger.error('auto-bind-roles error:', err);
     res.redirect(`/dashboard/server/${guildId}?error=Something+went+wrong+during+auto-bind#group-setup`);
+  }
+});
+
+// ---- Join request handlers ----
+
+// GET /dashboard/server/:guildId/join-requests — fetch pending join requests
+dashboardAuthRouter.get('/dashboard/server/:guildId/join-requests', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  try {
+    const roblox = await getConfigValue({ db }, guildId, 'roblox', {});
+    if (!roblox.groupId || !roblox.openCloudKey) {
+      return res.json({ requests: [] });
+    }
+
+    const data = await getGroupJoinRequests(roblox.groupId, roblox.openCloudKey);
+    const rawRequests = data.joinRequests || data.memberships || [];
+
+    // Resolve usernames for each pending request
+    const requests = await Promise.all(rawRequests.map(async (req) => {
+      // The user path is like "users/123456"
+      const userId = String(req.user || req.userId || '').replace('users/', '');
+      let username = userId;
+      try {
+        const userRes = await fetch(`https://users.roblox.com/v1/users/${userId}`);
+        if (userRes.ok) {
+          const u = await userRes.json();
+          username = u.name || userId;
+        }
+      } catch {}
+      return { userId, username };
+    }));
+
+    return res.json({ requests });
+  } catch (e) {
+    logger.error('Error fetching join requests:', e.message);
+    return res.json({ requests: [], error: e.message });
+  }
+});
+
+// POST /dashboard/server/:guildId/join-requests/accept — accept a request
+dashboardAuthRouter.post('/dashboard/server/:guildId/join-requests/accept', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const sub  = await getSubscription(guildId);
+  const tier = getTier(sub);
+  if (tier === 'free') return res.json({ success: false, error: 'Premium required.' });
+
+  const { userId, rank, reason, username } = req.body;
+  if (!userId) return res.json({ success: false, error: 'Missing userId' });
+
+  try {
+    const roblox = await getConfigValue({ db }, guildId, 'roblox', {});
+    if (!roblox.groupId || !roblox.openCloudKey) return res.json({ success: false, error: 'Group not configured.' });
+
+    // Accept the join request (silent fail if no pending request)
+    await acceptGroupJoinRequest(roblox.groupId, userId, roblox.openCloudKey).catch(() => {});
+
+    // Assign rank if provided
+    let rankName = null;
+    if (rank) {
+      const roles = await getGroupRoles(roblox.groupId, roblox.openCloudKey);
+      const targetRole = roles.find(r => String(r.rank) === String(rank));
+      if (targetRole) {
+        await updateGroupMemberRank(roblox.groupId, userId, targetRole.rank, roblox.openCloudKey);
+        rankName = targetRole.displayName;
+
+        // Post to log channel if configured
+        const autoRank = await getConfigValue({ db }, guildId, 'autoRank', {});
+        if (autoRank.logChannelId) {
+          const client = (await import('../utils/clientRef.js')).getClient();
+          const guild  = client?.guilds?.cache?.get(guildId);
+          const logChannel = guild?.channels?.cache?.get(autoRank.logChannelId) ||
+            await guild?.channels?.fetch(autoRank.logChannelId).catch(() => null);
+          if (logChannel) {
+            const { applyFormat, ACCEPT_LOG_FORMAT } = await import('../services/promotionParser.js');
+            const format  = autoRank.customFormat || ACCEPT_LOG_FORMAT;
+            const logText = applyFormat(format, {
+              username: username || userId,
+              oldRank:  'N/A',
+              newRank:  rankName,
+              reason:   reason || 'Accepted into group',
+              ranker:   access.user.username,
+            });
+            await logChannel.send(logText).catch(() => {});
+          }
+        }
+      }
+    }
+
+    return res.json({ success: true, rankName });
+  } catch (e) {
+    return res.json({ success: false, error: e.message });
+  }
+});
+
+// POST /dashboard/server/:guildId/join-requests/decline — decline a request
+dashboardAuthRouter.post('/dashboard/server/:guildId/join-requests/decline', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const sub  = await getSubscription(guildId);
+  const tier = getTier(sub);
+  if (tier === 'free') return res.json({ success: false, error: 'Premium required.' });
+
+  const { userId } = req.body;
+  if (!userId) return res.json({ success: false, error: 'Missing userId' });
+
+  try {
+    const roblox = await getConfigValue({ db }, guildId, 'roblox', {});
+    if (!roblox.groupId || !roblox.openCloudKey) return res.json({ success: false, error: 'Group not configured.' });
+    await declineGroupJoinRequest(roblox.groupId, userId, roblox.openCloudKey);
+    return res.json({ success: true });
+  } catch (e) {
+    return res.json({ success: false, error: e.message });
   }
 });
 
