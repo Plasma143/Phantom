@@ -63,6 +63,137 @@ dashboardAuthRouter.use(express.json());
 // Quietly avoid a 404 in the browser console for favicon requests.
 dashboardAuthRouter.get('/favicon.ico', (req, res) => res.status(204).end());
 
+// ── Public legal pages (required for Discord App Verification) ────────────────
+
+const LEGAL_STYLE = `
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#1a1a2e; color:#dbdee1; margin:0; padding:0; }
+  .container { max-width:800px; margin:0 auto; padding:48px 24px; }
+  h1 { color:#fff; font-size:28px; margin:0 0 6px; }
+  h2 { color:#fff; font-size:18px; margin:32px 0 8px; border-bottom:1px solid #2b2d31; padding-bottom:8px; }
+  p, li { color:#b5bac1; line-height:1.7; font-size:15px; }
+  ul { padding-left:20px; }
+  a { color:#5865F2; text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  .badge { display:inline-flex; align-items:center; gap:8px; background:#5865F2; color:#fff; padding:8px 16px; border-radius:8px; font-weight:700; font-size:14px; margin-bottom:32px; text-decoration:none; }
+  .footer { margin-top:48px; padding-top:24px; border-top:1px solid #2b2d31; color:#5e6272; font-size:13px; }
+`;
+
+dashboardAuthRouter.get('/terms', (req, res) => {
+  const updated = 'June 15, 2026';
+  res.setHeader('Content-Type', 'text/html');
+  res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Terms of Service — Phantom</title><style>${LEGAL_STYLE}</style></head><body><div class="container">
+  <a class="badge" href="/dashboard">🤖 Phantom Dashboard</a>
+  <h1>Terms of Service</h1>
+  <p style="color:#949ba4;font-size:14px;">Last updated: ${updated}</p>
+
+  <h2>1. Acceptance of Terms</h2>
+  <p>By inviting Phantom ("the Bot") to your Discord server or using any of its features, you ("the User") agree to be bound by these Terms of Service. If you do not agree, you must remove the Bot from your server immediately.</p>
+
+  <h2>2. Description of Service</h2>
+  <p>Phantom is a Discord bot that provides Roblox group management, member verification, moderation tools, music playback, leveling, and dashboard features. The Bot is provided by its developer ("the Developer") and is subject to change, suspension, or termination at any time.</p>
+
+  <h2>3. Permitted Use</h2>
+  <p>You may use the Bot for lawful purposes only. You agree not to:</p>
+  <ul>
+    <li>Use the Bot to harass, abuse, or harm others</li>
+    <li>Attempt to exploit, reverse-engineer, or abuse the Bot's systems</li>
+    <li>Use the Bot in violation of Discord's <a href="https://discord.com/terms">Terms of Service</a></li>
+    <li>Use the Bot to distribute spam, malware, or illegal content</li>
+    <li>Circumvent or attempt to bypass subscription tiers or payment systems</li>
+  </ul>
+
+  <h2>4. Subscriptions and Payments</h2>
+  <p>Certain features of Phantom require a paid subscription (Premium or Enterprise tier). Subscriptions are billed monthly. You may cancel at any time. Refunds are not guaranteed but may be issued at the Developer's discretion. Prices may change with reasonable notice.</p>
+
+  <h2>5. Data Collection</h2>
+  <p>The Bot collects and stores limited data necessary to operate its features, including Discord user IDs, server IDs, linked Roblox account information, and usage settings. See our <a href="/privacy">Privacy Policy</a> for full details.</p>
+
+  <h2>6. Availability and Uptime</h2>
+  <p>The Developer makes no guarantee of continuous availability. The Bot may experience downtime for maintenance, updates, or unforeseen technical issues. No refunds will be issued for periods of unavailability.</p>
+
+  <h2>7. Termination</h2>
+  <p>The Developer reserves the right to terminate or restrict your access to the Bot at any time, for any reason, including violation of these Terms. You may remove the Bot from your server at any time.</p>
+
+  <h2>8. Disclaimer of Warranties</h2>
+  <p>The Bot is provided "as is" without warranties of any kind, express or implied. The Developer is not liable for any damages arising from the use or inability to use the Bot.</p>
+
+  <h2>9. Changes to Terms</h2>
+  <p>These Terms may be updated at any time. Continued use of the Bot after changes are posted constitutes acceptance of the new Terms.</p>
+
+  <h2>10. Contact</h2>
+  <p>For questions about these Terms, join the <a href="https://discord.gg/phantom">Phantom support server</a> or contact the Developer through Discord.</p>
+
+  <div class="footer">© 2026 Phantom Bot. All rights reserved.</div>
+</div></body></html>`);
+});
+
+dashboardAuthRouter.get('/privacy', (req, res) => {
+  const updated = 'June 15, 2026';
+  res.setHeader('Content-Type', 'text/html');
+  res.send(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Privacy Policy — Phantom</title><style>${LEGAL_STYLE}</style></head><body><div class="container">
+  <a class="badge" href="/dashboard">🤖 Phantom Dashboard</a>
+  <h1>Privacy Policy</h1>
+  <p style="color:#949ba4;font-size:14px;">Last updated: ${updated}</p>
+
+  <h2>1. Overview</h2>
+  <p>Phantom ("the Bot") is committed to protecting your privacy. This Privacy Policy explains what data we collect, how we use it, and how you can request its removal.</p>
+
+  <h2>2. Data We Collect</h2>
+  <p>We collect the minimum data required to operate the Bot's features:</p>
+  <ul>
+    <li><strong>Discord User IDs</strong> — to identify users across sessions and link accounts</li>
+    <li><strong>Discord Server IDs</strong> — to store per-server configuration</li>
+    <li><strong>Discord Usernames and Nicknames</strong> — displayed in dashboards and logs</li>
+    <li><strong>Roblox User IDs and Usernames</strong> — when you voluntarily link your Roblox account</li>
+    <li><strong>Message Content</strong> — only in channels configured for auto-rank detection; not stored permanently</li>
+    <li><strong>Server Configuration</strong> — role IDs, channel IDs, and feature settings chosen by server administrators</li>
+    <li><strong>Billing Information</strong> — handled entirely by Stripe; we do not store card details</li>
+  </ul>
+
+  <h2>3. How We Use Your Data</h2>
+  <ul>
+    <li>Providing and personalising the Bot's features (rank syncing, verification, moderation, etc.)</li>
+    <li>Displaying linked Roblox accounts and group ranks in the dashboard</li>
+    <li>Sending audit logs and notifications to configured channels</li>
+    <li>Processing subscription payments via Stripe</li>
+    <li>Improving the Bot's reliability and performance</li>
+  </ul>
+
+  <h2>4. Data Storage</h2>
+  <p>Data is stored in a secure PostgreSQL database hosted on Railway. Data is retained for as long as you use the Bot. Server configuration data is removed within 30 days of the Bot being removed from a server.</p>
+
+  <h2>5. Data Sharing</h2>
+  <p>We do not sell, rent, or share your data with third parties except:</p>
+  <ul>
+    <li><strong>Stripe</strong> — for payment processing (subject to <a href="https://stripe.com/privacy">Stripe's Privacy Policy</a>)</li>
+    <li><strong>Roblox</strong> — when the Bot makes API calls on your behalf (subject to <a href="https://en.help.roblox.com/hc/en-us/articles/115004630823">Roblox's Privacy Policy</a>)</li>
+    <li><strong>Discord</strong> — the Bot operates within Discord's platform (subject to <a href="https://discord.com/privacy">Discord's Privacy Policy</a>)</li>
+  </ul>
+
+  <h2>6. Data Removal</h2>
+  <p>You can request deletion of your personal data at any time by:</p>
+  <ul>
+    <li>Using <code>/wipedata</code> in Discord to remove your linked account data</li>
+    <li>Contacting us through the support server</li>
+  </ul>
+  <p>Server administrators can remove all data for their server by removing the Bot and contacting the Developer.</p>
+
+  <h2>7. Children's Privacy</h2>
+  <p>The Bot is not directed at children under 13. We do not knowingly collect data from children under 13. If you believe a child has provided data, please contact us immediately.</p>
+
+  <h2>8. Your Rights</h2>
+  <p>Depending on your location, you may have the right to access, correct, or delete your personal data. Contact us through the support server to exercise these rights.</p>
+
+  <h2>9. Changes to This Policy</h2>
+  <p>This Privacy Policy may be updated at any time. We will notify users of significant changes through the support server.</p>
+
+  <h2>10. Contact</h2>
+  <p>For privacy concerns, join the <a href="https://discord.gg/phantom">Phantom support server</a> or contact the Developer through Discord.</p>
+
+  <div class="footer">© 2026 Phantom Bot. All rights reserved.</div>
+</div></body></html>`);
+});
+
 // ---- Tiny manual cookie helpers (avoids adding cookie-parser as a dependency) ----
 
 function getCookie(req, name) {
