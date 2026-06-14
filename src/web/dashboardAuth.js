@@ -21,6 +21,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { logger } from '../utils/logger.js';
 import { getConfigValue, updateGuildConfig } from '../services/guildConfig.js';
 import { db } from '../utils/database.js';
+import { pgDb } from '../utils/postgresDatabase.js';
 import { getRobloxGroupInfo, getRobloxUserByUsername, getGroupRoles, getGroupMembership, updateGroupMemberRank } from '../utils/roblox.js';
 
 const PUBLIC_URL = process.env.PUBLIC_URL || 'https://r2-d2-production.up.railway.app';
@@ -459,39 +460,49 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
     const { guild, user } = access;
 
-    const [rolesRes, channelsRes, roblox, auditLogs] = await Promise.all([
-      fetch(`https://discord.com/api/guilds/${guildId}/roles`, {
-        headers: { Authorization: `Bot ${BOT_TOKEN}` },
-      }),
-      fetch(`https://discord.com/api/guilds/${guildId}/channels`, {
-        headers: { Authorization: `Bot ${BOT_TOKEN}` },
-      }),
+    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification] = await Promise.all([
+      fetch(`https://discord.com/api/guilds/${guildId}/roles`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
+      fetch(`https://discord.com/api/guilds/${guildId}/channels`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
+      fetch(`https://discord.com/api/guilds/${guildId}/members?limit=1000`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       getConfigValue({ db }, guildId, 'roblox', {}),
       getConfigValue({ db }, guildId, 'auditLogs', {}),
+      getConfigValue({ db }, guildId, 'verification', {}),
     ]);
 
     const allRoles = rolesRes.ok ? await rolesRes.json() : [];
     const roleMap = new Map(allRoles.map((r) => [r.id, r.name]));
     const roleName = (id) => (id ? roleMap.get(id) || `Unknown role (${id})` : null);
-
-    const assignableRoles = allRoles
-      .filter((r) => r.id !== guildId)
-      .sort((a, b) => b.position - a.position);
-
-    const roleOptions = (selectedId) =>
-      assignableRoles
-        .map((r) => `<option value="${r.id}" ${r.id === selectedId ? 'selected' : ''}>${r.name}</option>`)
-        .join('');
+    const assignableRoles = allRoles.filter((r) => r.id !== guildId).sort((a, b) => b.position - a.position);
+    const roleOptions = (selectedId) => assignableRoles.map((r) => `<option value="${r.id}" ${r.id === selectedId ? 'selected' : ''}>${r.name}</option>`).join('');
 
     const allChannels = channelsRes.ok ? await channelsRes.json() : [];
-    const textChannels = allChannels
-      .filter((c) => c.type === 0)
-      .sort((a, b) => a.position - b.position);
+    const textChannels = allChannels.filter((c) => c.type === 0).sort((a, b) => a.position - b.position);
+    const channelOptions = (selectedId) => textChannels.map((c) => `<option value="${c.id}" ${c.id === selectedId ? 'selected' : ''}>#${c.name}</option>`).join('');
 
-    const channelOptions = (selectedId) =>
-      textChannels
-        .map((c) => `<option value="${c.id}" ${c.id === selectedId ? 'selected' : ''}>#${c.name}</option>`)
-        .join('');
+    const guildMembers = membersRes.ok ? await membersRes.json() : [];
+    const guildMemberMap = new Map(guildMembers.map((m) => [m.user.id, m]));
+    const allLinkedKeys = await pgDb.list('roblox_link:');
+    const linkedMembers = (await Promise.all(
+      allLinkedKeys
+        .map((k) => k.replace('roblox_link:', ''))
+        .filter((id) => guildMemberMap.has(id))
+        .map(async (discordId) => {
+          const link = await pgDb.get(`roblox_link:${discordId}`);
+          if (!link) return null;
+          const m = guildMemberMap.get(discordId);
+          return {
+            discordId,
+            discordName: m.nick || m.user.username,
+            avatar: m.user.avatar
+              ? `https://cdn.discordapp.com/avatars/${discordId}/${m.user.avatar}.png?size=32`
+              : 'https://cdn.discordapp.com/embed/avatars/0.png',
+            robloxUsername: link.robloxUsername,
+          };
+        })
+    )).filter(Boolean);
+
+    const docKeys = await pgDb.list(`doc:${guildId}:`);
+    const docs = (await Promise.all(docKeys.map((k) => pgDb.get(k)))).filter(Boolean);
 
     let groupLine = '<em style="color:#888;">Not set</em>';
     if (roblox.groupId) {
@@ -503,71 +514,62 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
     const rankRoleEntries = Object.entries(roblox.rankRoles || {});
     const rankRolesHtml = rankRoleEntries.length
-      ? rankRoleEntries
-          .map(
-            ([rank, roleId]) => `
-              <li style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                <span>Rank ${rank} → ${roleName(roleId)}</span>
-                <form method="POST" action="/dashboard/server/${guildId}/rank-roles/remove" style="margin:0;">
-                  <input type="hidden" name="rank" value="${rank}" />
-                  <button type="submit" style="background:none; border:none; color:#ed4245; font-size:13px; cursor:pointer;">Remove</button>
-                </form>
-              </li>
-            `,
-          )
-          .join('')
+      ? rankRoleEntries.map(([rank, roleId]) => `
+          <li style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span>Rank ${rank} &rarr; ${roleName(roleId)}</span>
+            <form method="POST" action="/dashboard/server/${guildId}/rank-roles/remove" style="margin:0;">
+              <input type="hidden" name="rank" value="${rank}" />
+              <button type="submit" style="background:none; border:none; color:#ed4245; font-size:13px; cursor:pointer;">Remove</button>
+            </form>
+          </li>`).join('')
       : '<li style="color:#888;"><em>None set</em></li>';
 
     let banner = '';
-    if (req.query.success) {
-      banner = `<div style="background:#1a3a2a; color:#57f287; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #2d5a3d; font-size:14px;">✅ ${req.query.success}</div>`;
-    } else if (req.query.error) {
-      banner = `<div style="background:#3a1a1a; color:#ed4245; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #5a2d2d; font-size:14px;">❌ ${req.query.error}</div>`;
-    }
+    if (req.query.success) banner = `<div style="background:#1a3a2a; color:#57f287; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #2d5a3d; font-size:14px;">&#x2705; ${req.query.success}</div>`;
+    else if (req.query.error) banner = `<div style="background:#3a1a1a; color:#ed4245; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #5a2d2d; font-size:14px;">&#x274C; ${req.query.error}</div>`;
 
-    const tabStyle = `padding:10px 20px; border:none; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; transition:all 0.15s; white-space:nowrap;`;
-    const activeTabStyle = `${tabStyle} background:#5865F2; color:#fff;`;
-    const inactiveTabStyle = `${tabStyle} background:transparent; color:#949ba4;`;
+    const TAB = 'padding:9px 16px; border:none; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; transition:all 0.15s; white-space:nowrap;';
+    const ACTIVE = TAB + ' background:#5865F2; color:#fff;';
+    const INACTIVE = TAB + ' background:transparent; color:#949ba4;';
+    const PANEL = 'background:#1e2124; border-radius:12px; padding:24px;';
+
+    const verChanName = textChannels.find((c) => c.id === verification.channelId);
 
     const body = `
-      <div style="margin-bottom:20px; text-align:left; max-width:600px; margin-left:auto; margin-right:auto;">
-        <a href="/dashboard" style="color:#5865F2; text-decoration:none; font-size:14px;">← Back to servers</a>
+      <div style="margin-bottom:20px; text-align:left; max-width:700px; margin-left:auto; margin-right:auto;">
+        <a href="/dashboard" style="color:#5865F2; text-decoration:none; font-size:14px;">&larr; Back to servers</a>
       </div>
-
       <img src="${guildIconUrl(guild)}" width="56" style="border-radius:50%; margin-bottom:10px;" />
       <h2 style="margin:0 0 4px; font-size:22px;">${guild.name}</h2>
       <p style="color:#949ba4; font-size:14px; margin:0 0 24px;">Server Settings</p>
-
       ${banner}
 
-      <div style="max-width:600px; margin:0 auto; text-align:left;">
+      <div style="max-width:700px; margin:0 auto; text-align:left;">
 
-        <!-- Tab Bar -->
-        <div style="display:flex; gap:4px; background:#111214; padding:4px; border-radius:10px; margin-bottom:20px; overflow-x:auto;">
-          <button id="btn-group-setup" style="${activeTabStyle}" onclick="showTab('group-setup', this)">⚙️ Group Setup</button>
-          <button id="btn-rank-management" style="${inactiveTabStyle}" onclick="showTab('rank-management', this)">👑 Rank Management</button>
-          <button id="btn-audit-logs" style="${inactiveTabStyle}" onclick="showTab('audit-logs', this)">📋 Audit Logs</button>
+        <div style="display:flex; gap:3px; background:#111214; padding:4px; border-radius:10px; margin-bottom:20px; overflow-x:auto; flex-wrap:wrap;">
+          <button id="btn-group-setup" style="${ACTIVE}" onclick="showTab('group-setup',this)">&#9881;&#65039; Group Setup</button>
+          <button id="btn-rank-management" style="${INACTIVE}" onclick="showTab('rank-management',this)">&#128081; Rank Management</button>
+          <button id="btn-audit-logs" style="${INACTIVE}" onclick="showTab('audit-logs',this)">&#128203; Audit Logs</button>
+          <button id="btn-members" style="${INACTIVE}" onclick="showTab('members',this)">&#128101; Members</button>
+          <button id="btn-documents" style="${INACTIVE}" onclick="showTab('documents',this)">&#128196; Documents</button>
+          <button id="btn-verification" style="${INACTIVE}" onclick="showTab('verification',this)">&#128276; Verification</button>
         </div>
 
-        <!-- Tab: Group Setup -->
-        <div id="tab-group-setup" style="background:#1e2124; border-radius:12px; padding:24px;">
-
+        <div id="tab-group-setup" style="${PANEL}">
           <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Roblox Group</p>
           <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">${groupLine}</p>
           <form method="POST" action="/dashboard/server/${guildId}/group" style="display:flex; gap:8px; margin-bottom:24px;">
             <input type="text" name="groupId" value="${roblox.groupId || ''}" placeholder="Roblox Group ID" style="flex:1; ${fieldStyle}" />
             <button type="submit" style="${buttonStyle}">Save</button>
           </form>
-
           <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Verified Role</p>
           <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Given to everyone once they link their Roblox account.</p>
           <form method="POST" action="/dashboard/server/${guildId}/verified-role" style="margin-bottom:24px;">
             <select name="roleId" onchange="this.form.submit()" style="width:100%; ${fieldStyle}">
-              <option value="" ${!roblox.verifiedRole ? 'selected' : ''}>— None —</option>
+              <option value="" ${!roblox.verifiedRole ? 'selected' : ''}>-- None --</option>
               ${roleOptions(roblox.verifiedRole)}
             </select>
           </form>
-
           <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Rank Roles</p>
           <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Maps a Roblox group rank number to a Discord role.</p>
           <ul style="list-style:none; padding:0; margin:0 0 12px;">${rankRolesHtml}</ul>
@@ -579,173 +581,204 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
             </select>
             <button type="submit" style="${buttonStyle}">Add</button>
           </form>
-
         </div>
 
-        <!-- Tab: Rank Management -->
-        <div id="tab-rank-management" style="display:none; background:#1e2124; border-radius:12px; padding:24px;">
-
+        <div id="tab-rank-management" style="display:none; ${PANEL}">
           <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Open Cloud API Key</p>
-          <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">
-            Required to change Roblox group ranks from this dashboard.
-            Create one at <a href="https://create.roblox.com/dashboard/credentials" target="_blank" style="color:#5865F2;">create.roblox.com</a>
-            with <strong>group:write</strong> permission.
-          </p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Required to change Roblox group ranks. Create one at <a href="https://create.roblox.com/dashboard/credentials" target="_blank" style="color:#5865F2;">create.roblox.com</a> with <strong>group:write</strong> permission.</p>
           <form method="POST" action="/dashboard/server/${guildId}/open-cloud-key" style="display:flex; gap:8px; margin-bottom:28px;">
-            <input type="password" name="openCloudKey" placeholder="${roblox.openCloudKey ? 'Key saved — paste a new one to replace' : 'Paste Open Cloud API key'}" style="flex:1; ${fieldStyle}" />
+            <input type="password" name="openCloudKey" placeholder="${roblox.openCloudKey ? 'Key saved -- paste a new one to replace' : 'Paste Open Cloud API key'}" style="flex:1; ${fieldStyle}" />
             <button type="submit" style="${buttonStyle}">Save</button>
           </form>
-
           ${roblox.groupId && roblox.openCloudKey ? `
           <hr style="border:none; border-top:1px solid #2b2d31; margin:0 0 24px;" />
           <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Rank a Member</p>
-          <p style="color:#949ba4; font-size:13px; margin:0 0 14px;">Look up a Roblox user and change their rank in the group.</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 14px;">Look up a Roblox user and change their rank.</p>
           <div style="display:flex; gap:8px; margin-bottom:16px;">
             <input type="text" id="rankUsername" placeholder="Roblox username" style="flex:1; ${fieldStyle}" onkeydown="if(event.key==='Enter') lookupMember()" />
             <button onclick="lookupMember()" style="${buttonStyle}">Look Up</button>
           </div>
-          <div id="rankResult" style="display:none; background:#111214; border-radius:10px; padding:16px; margin-bottom:8px; border:1px solid #2b2d31;">
+          <div id="rankResult" style="display:none; background:#111214; border-radius:10px; padding:16px; border:1px solid #2b2d31;">
             <p id="rankResultName" style="color:#fff; margin:0 0 2px; font-weight:700;"></p>
             <p id="rankResultCurrent" style="color:#949ba4; margin:0 0 14px; font-size:13px;"></p>
-            <div style="display:flex; gap:8px; align-items:center;">
+            <div style="display:flex; gap:8px;">
               <select id="rankSelect" style="flex:1; ${fieldStyle}"></select>
               <button onclick="changeRank()" style="${buttonStyle}">Change Rank</button>
             </div>
             <p id="rankMsg" style="margin:10px 0 0; font-size:13px;"></p>
           </div>
           <script>
-            var currentRobloxId = null;
-            async function lookupMember() {
-              var username = document.getElementById('rankUsername').value.trim();
-              if (!username) return;
-              var resultDiv = document.getElementById('rankResult');
-              var msg = document.getElementById('rankMsg');
-              msg.textContent = '';
-              resultDiv.style.display = 'none';
-              try {
-                var res = await fetch('/dashboard/server/${guildId}/rank-lookup', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ username: username })
-                });
-                var data = await res.json();
-                if (!data.success) { alert(data.error || 'Could not find that user.'); return; }
-                currentRobloxId = data.robloxId;
-                document.getElementById('rankResultName').textContent = data.robloxUsername;
-                document.getElementById('rankResultCurrent').textContent = 'Current rank: ' + data.currentRankName + ' (' + data.currentRank + ')';
-                var select = document.getElementById('rankSelect');
-                select.innerHTML = data.roles
-                  .filter(function(r) { return r.rank !== 255; })
-                  .map(function(r) { return '<option value="' + r.rank + '"' + (r.rank === data.currentRank ? ' selected' : '') + '>' + r.displayName + ' (' + r.rank + ')</option>'; })
-                  .join('');
-                resultDiv.style.display = 'block';
-              } catch(e) { alert('Error looking up user.'); }
+            var currentRobloxId=null;
+            async function lookupMember(){
+              var u=document.getElementById('rankUsername').value.trim();if(!u)return;
+              document.getElementById('rankResult').style.display='none';
+              document.getElementById('rankMsg').textContent='';
+              try{
+                var r=await fetch('/dashboard/server/${guildId}/rank-lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u})});
+                var d=await r.json();
+                if(!d.success){alert(d.error||'User not found.');return;}
+                currentRobloxId=d.robloxId;
+                document.getElementById('rankResultName').textContent=d.robloxUsername;
+                document.getElementById('rankResultCurrent').textContent='Current rank: '+d.currentRankName+' ('+d.currentRank+')';
+                document.getElementById('rankSelect').innerHTML=d.roles.filter(function(r){return r.rank!==255;}).map(function(r){return '<option value="'+r.rank+'"'+(r.rank===d.currentRank?' selected':'')+'>'+r.displayName+' ('+r.rank+')</option>';}).join('');
+                document.getElementById('rankResult').style.display='block';
+              }catch(e){alert('Error looking up user.');}
             }
-            async function changeRank() {
-              var targetRank = Number(document.getElementById('rankSelect').value);
-              var msg = document.getElementById('rankMsg');
-              msg.style.color = '#949ba4';
-              msg.textContent = 'Changing rank...';
-              try {
-                var res = await fetch('/dashboard/server/${guildId}/rank-change', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ robloxId: currentRobloxId, targetRank: targetRank })
-                });
-                var data = await res.json();
-                if (data.success) {
-                  msg.style.color = '#57f287';
-                  msg.textContent = '✅ Rank changed successfully!';
-                  var sel = document.getElementById('rankSelect');
-                  document.getElementById('rankResultCurrent').textContent = 'Current rank: ' + sel.options[sel.selectedIndex].text;
-                } else {
-                  msg.style.color = '#ed4245';
-                  msg.textContent = '❌ ' + (data.error || 'Something went wrong.');
-                }
-              } catch(e) {
-                msg.style.color = '#ed4245';
-                msg.textContent = '❌ Error contacting server.';
-              }
+            async function changeRank(){
+              var t=Number(document.getElementById('rankSelect').value);
+              var m=document.getElementById('rankMsg');
+              m.style.color='#949ba4';m.textContent='Changing rank...';
+              try{
+                var r=await fetch('/dashboard/server/${guildId}/rank-change',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({robloxId:currentRobloxId,targetRank:t})});
+                var d=await r.json();
+                if(d.success){m.style.color='#57f287';m.textContent='Rank changed successfully!';var s=document.getElementById('rankSelect');document.getElementById('rankResultCurrent').textContent='Current rank: '+s.options[s.selectedIndex].text;}
+                else{m.style.color='#ed4245';m.textContent=d.error||'Something went wrong.';}
+              }catch(e){m.style.color='#ed4245';m.textContent='Error contacting server.';}
             }
           </script>
-          ` : roblox.groupId ? `
-          <p style="color:#949ba4; font-size:14px; padding:16px; background:#111214; border-radius:8px; border:1px solid #2b2d31;">
-            Save an Open Cloud API key above to enable rank changes.
-          </p>
-          ` : `
-          <p style="color:#949ba4; font-size:14px; padding:16px; background:#111214; border-radius:8px; border:1px solid #2b2d31;">
-            Set a Roblox Group ID in the <strong style="color:#fff;">Group Setup</strong> tab first.
-          </p>
-          `}
-
+          ` : `<p style="color:#949ba4; padding:16px; background:#111214; border-radius:8px; border:1px solid #2b2d31; font-size:14px;">${roblox.groupId ? 'Save an Open Cloud API key above to enable rank changes.' : 'Set a Roblox Group ID in Group Setup first.'}</p>`}
         </div>
 
-        <!-- Tab: Audit Logs -->
-        <div id="tab-audit-logs" style="display:none; background:#1e2124; border-radius:12px; padding:24px;">
-
-          <p style="color:#949ba4; font-size:13px; margin:0 0 24px; line-height:1.6;">
-            Configure which channels receive automatic log messages. Each log type posts to its own channel so they stay separate.
-          </p>
-
-          <form method="POST" action="/dashboard/server/${guildId}/audit-logs">
-
-            <div style="background:#111214; border:1px solid #2b2d31; border-radius:10px; padding:16px; margin-bottom:24px; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;">
-              <div>
-                <p style="color:#fff; font-weight:700; margin:0 0 4px; font-size:14px;">🤖 Auto-Create Log Channels</p>
-                <p style="color:#949ba4; font-size:13px; margin:0;">Creates a <strong style="color:#fff;">📋 Phantom Logs</strong> category with <strong style="color:#fff;">#discord-logs</strong>, <strong style="color:#fff;">#roblox-logs</strong>, and <strong style="color:#fff;">#dashboard-logs</strong> — and saves them automatically.</p>
-              </div>
-              <a href="/dashboard/server/${guildId}/create-log-channels" style="display:inline-block; padding:10px 18px; background:#5865F2; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; font-weight:600; white-space:nowrap;">Create Channels</a>
+        <div id="tab-audit-logs" style="display:none; ${PANEL}">
+          <div style="background:#111214; border:1px solid #2b2d31; border-radius:10px; padding:16px; margin-bottom:24px; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+            <div>
+              <p style="color:#fff; font-weight:700; margin:0 0 4px; font-size:14px;">&#x1F916; Auto-Create Log Channels</p>
+              <p style="color:#949ba4; font-size:13px; margin:0;">Creates a <strong style="color:#fff;">Phantom Logs</strong> category with <strong style="color:#fff;">#discord-logs</strong>, <strong style="color:#fff;">#roblox-logs</strong>, <strong style="color:#fff;">#dashboard-logs</strong>.</p>
             </div>
-
-            <p style="font-weight:700; margin:0 0 4px; font-size:15px;">🔔 Discord Events</p>
-            <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Logs joins, leaves, kicks, bans, and role changes in your server.</p>
-            <select name="discordChannelId" style="width:100%; ${fieldStyle} margin-bottom:24px;">
-              <option value="">— Disabled —</option>
-              ${channelOptions(auditLogs.discordChannelId)}
-            </select>
-
-            <p style="font-weight:700; margin:0 0 4px; font-size:15px;">👑 Roblox Rank Changes</p>
-            <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Logs every rank change made through the dashboard, including who changed it and when.</p>
-            <select name="robloxChannelId" style="width:100%; ${fieldStyle} margin-bottom:24px;">
-              <option value="">— Disabled —</option>
-              ${channelOptions(auditLogs.robloxChannelId)}
-            </select>
-
-            <p style="font-weight:700; margin:0 0 4px; font-size:15px;">🖥️ Dashboard Actions</p>
-            <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Logs settings changes made on this dashboard — group binding, role updates, key changes.</p>
-            <select name="dashboardChannelId" style="width:100%; ${fieldStyle} margin-bottom:24px;">
-              <option value="">— Disabled —</option>
-              ${channelOptions(auditLogs.dashboardChannelId)}
-            </select>
-
+            <a href="/dashboard/server/${guildId}/create-log-channels" style="display:inline-block; padding:10px 18px; background:#5865F2; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; font-weight:600; white-space:nowrap;">Create Channels</a>
+          </div>
+          <form method="POST" action="/dashboard/server/${guildId}/audit-logs">
+            <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Discord Events</p>
+            <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Logs joins, leaves, kicks, bans, role changes.</p>
+            <select name="discordChannelId" style="width:100%; ${fieldStyle} margin-bottom:20px;"><option value="">-- Disabled --</option>${channelOptions(auditLogs.discordChannelId)}</select>
+            <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Roblox Rank Changes</p>
+            <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Logs every rank change made through the dashboard.</p>
+            <select name="robloxChannelId" style="width:100%; ${fieldStyle} margin-bottom:20px;"><option value="">-- Disabled --</option>${channelOptions(auditLogs.robloxChannelId)}</select>
+            <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Dashboard Actions</p>
+            <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Logs settings changes made on this dashboard.</p>
+            <select name="dashboardChannelId" style="width:100%; ${fieldStyle} margin-bottom:20px;"><option value="">-- Disabled --</option>${channelOptions(auditLogs.dashboardChannelId)}</select>
             <button type="submit" style="${buttonStyle}">Save Log Channels</button>
           </form>
-
         </div>
 
-      </div>
+        <div id="tab-members" style="display:none; ${PANEL}">
+          <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Linked Members</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 20px;">Members who have linked their Roblox account. Click Rank to manage their rank.</p>
+          ${linkedMembers.length ? `
+          <table style="width:100%; border-collapse:collapse; font-size:14px;">
+            <thead><tr style="border-bottom:1px solid #2b2d31;">
+              <th style="text-align:left; padding:8px 10px; color:#949ba4; font-weight:600;">Discord</th>
+              <th style="text-align:left; padding:8px 10px; color:#949ba4; font-weight:600;">Roblox</th>
+              <th style="padding:8px 10px;"></th>
+            </tr></thead>
+            <tbody>
+              ${linkedMembers.map((m) => `
+              <tr style="border-bottom:1px solid #1a1b1e;">
+                <td style="padding:10px; display:flex; align-items:center; gap:10px;">
+                  <img src="${m.avatar}" width="28" height="28" style="border-radius:50%;" /><span style="color:#fff;">${m.discordName}</span>
+                </td>
+                <td style="padding:10px; color:#949ba4;">${m.robloxUsername}</td>
+                <td style="padding:10px;">
+                  <button onclick="rankFromMembers('${m.robloxUsername}')" style="padding:5px 12px; background:#5865F2; color:#fff; border:none; border-radius:6px; font-size:13px; cursor:pointer;">Rank</button>
+                </td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+          <p style="color:#949ba4; font-size:13px; margin:16px 0 0;">${linkedMembers.length} linked member${linkedMembers.length !== 1 ? 's' : ''}</p>
+          <script>
+            function rankFromMembers(username){
+              showTab('rank-management',document.getElementById('btn-rank-management'));
+              var inp=document.getElementById('rankUsername');
+              if(inp){inp.value=username;}
+            }
+          </script>
+          ` : `
+          <div style="padding:32px; text-align:center; background:#111214; border-radius:10px; border:1px solid #2b2d31;">
+            <p style="color:#949ba4; margin:0; font-size:14px;">No members have linked their Roblox account yet.</p>
+            <p style="color:#5865F2; margin:8px 0 0; font-size:13px;">Members can link via <strong>/linkroblox</strong> in Discord.</p>
+          </div>`}
+        </div>
 
-      <script>
-        function showTab(name, btn) {
-          ['group-setup','rank-management','audit-logs'].forEach(function(t) {
-            document.getElementById('tab-' + t).style.display = 'none';
-            document.getElementById('btn-' + t).style.background = 'transparent';
-            document.getElementById('btn-' + t).style.color = '#949ba4';
-          });
-          document.getElementById('tab-' + name).style.display = 'block';
-          btn.style.background = '#5865F2';
-          btn.style.color = '#fff';
-          window.location.hash = name;
-        }
-        window.addEventListener('load', function() {
-          var hash = window.location.hash.slice(1);
-          var valid = ['group-setup','rank-management','audit-logs'];
-          if (hash && valid.indexOf(hash) !== -1) {
-            var btn = document.getElementById('btn-' + hash);
-            if (btn) showTab(hash, btn);
+        <div id="tab-documents" style="display:none; ${PANEL}">
+          <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Server Documents</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 20px;">Private documents visible only to this server's admins. Each gets a shareable read-only link.</p>
+          <form method="POST" action="/dashboard/server/${guildId}/documents" style="margin-bottom:24px; background:#111214; border-radius:10px; padding:16px; border:1px solid #2b2d31;">
+            <p style="font-weight:700; margin:0 0 12px; font-size:14px; color:#fff;">+ New Document</p>
+            <input type="text" name="title" placeholder="Document title" required style="width:100%; ${fieldStyle} margin-bottom:10px; box-sizing:border-box;" />
+            <textarea name="content" placeholder="Write your document content here..." rows="5" style="width:100%; ${fieldStyle} resize:vertical; font-family:inherit; line-height:1.6; box-sizing:border-box;"></textarea>
+            <button type="submit" style="${buttonStyle} margin-top:10px;">Create Document</button>
+          </form>
+          ${docs.length ? docs.map((doc) => `
+          <div style="background:#111214; border-radius:10px; padding:16px; margin-bottom:12px; border:1px solid #2b2d31;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
+              <div style="flex:1;">
+                <p style="font-weight:700; color:#fff; margin:0 0 4px;">${doc.title}</p>
+                <p style="color:#949ba4; font-size:12px; margin:0 0 8px;">By ${doc.authorName} &middot; ${new Date(doc.createdAt).toLocaleDateString()}</p>
+                <p style="color:#ccc; font-size:13px; margin:0; white-space:pre-wrap; max-height:60px; overflow:hidden;">${doc.content.slice(0,180)}${doc.content.length>180?'...':''}</p>
+              </div>
+              <div style="display:flex; gap:8px; flex-shrink:0;">
+                <a href="/dashboard/docs/${guildId}/${doc.id}" target="_blank" style="padding:6px 12px; background:#2b2d31; color:#fff; border-radius:6px; text-decoration:none; font-size:13px;">View</a>
+                <a href="/dashboard/server/${guildId}/documents/${doc.id}/delete" style="padding:6px 12px; color:#ed4245; border-radius:6px; text-decoration:none; font-size:13px;" onclick="return confirm('Delete this document?')">Delete</a>
+              </div>
+            </div>
+          </div>`).join('') : `
+          <div style="padding:32px; text-align:center; background:#111214; border-radius:10px; border:1px solid #2b2d31;">
+            <p style="color:#949ba4; margin:0; font-size:14px;">No documents yet -- create one above.</p>
+          </div>`}
+        </div>
+
+        <div id="tab-verification" style="display:none; ${PANEL}">
+          <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Verification Panel</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 20px; line-height:1.6;">Choose a channel and post the verification panel so members can link their Roblox account.</p>
+          <form method="POST" action="/dashboard/server/${guildId}/verification-channel" style="margin-bottom:24px;">
+            <p style="font-weight:700; margin:0 0 8px; font-size:14px; color:#fff;">Verification Channel</p>
+            <div style="display:flex; gap:8px;">
+              <select name="channelId" style="flex:1; ${fieldStyle}">
+                <option value="">-- Select a channel --</option>
+                ${channelOptions(verification.channelId)}
+              </select>
+              <button type="submit" style="${buttonStyle}">Save</button>
+            </div>
+          </form>
+          ${verification.channelId ? `
+          <div style="background:#111214; border-radius:10px; padding:16px; border:1px solid #2b2d31; margin-bottom:20px;">
+            <p style="color:#fff; font-weight:700; margin:0 0 8px; font-size:14px;">Panel Preview</p>
+            <div style="background:#2b2d31; border-radius:8px; padding:14px; border-left:4px solid #5865F2;">
+              <p style="color:#fff; font-weight:700; margin:0 0 4px;">Link your Roblox Account</p>
+              <p style="color:#b5bac1; font-size:13px; margin:0;">Click <strong>Link Roblox</strong> to connect your account, or <strong>Update</strong> to refresh your roles.</p>
+            </div>
+            <p style="color:#949ba4; font-size:12px; margin:8px 0 0;">Buttons: Link Roblox &middot; Update &middot; Sign in with Roblox</p>
+          </div>
+          <form method="POST" action="/dashboard/server/${guildId}/post-verification-panel">
+            <button type="submit" style="${buttonStyle}">Post Panel to #${verChanName ? verChanName.name : 'channel'}</button>
+          </form>
+          ` : `
+          <div style="padding:20px; background:#111214; border-radius:10px; border:1px solid #2b2d31;">
+            <p style="color:#949ba4; margin:0; font-size:14px;">Select a channel above to enable posting the panel.</p>
+          </div>`}
+        </div>
+
+        <script>
+          var ALL_TABS=['group-setup','rank-management','audit-logs','members','documents','verification'];
+          function showTab(name,btn){
+            ALL_TABS.forEach(function(t){
+              document.getElementById('tab-'+t).style.display='none';
+              var b=document.getElementById('btn-'+t);
+              b.style.background='transparent';b.style.color='#949ba4';
+            });
+            document.getElementById('tab-'+name).style.display='block';
+            btn.style.background='#5865F2';btn.style.color='#fff';
+            window.location.hash=name;
           }
-        });
-      </script>
+          window.addEventListener('load',function(){
+            var hash=window.location.hash.slice(1);
+            if(hash&&ALL_TABS.indexOf(hash)!==-1){
+              var btn=document.getElementById('btn-'+hash);
+              if(btn)showTab(hash,btn);
+            }
+          });
+        </script>
+      </div>
     `;
 
     res.send(renderPage(body, user));
@@ -754,6 +787,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
     res.status(500).send('Something went wrong.');
   }
 });
+
 
 // ---- Save handlers (mirror /robloxsetup's group, verifiedrole, rankrole) ----
 
@@ -860,6 +894,89 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/audit-logs', async (req, re
   });
 
   res.redirect(`/dashboard/server/${guildId}?success=Audit+log+channels+saved#audit-logs`);
+});
+
+// ---- Document handlers ----
+
+dashboardAuthRouter.post('/dashboard/server/:guildId/documents', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  const { title, content } = req.body;
+  if (!title || !content) return res.redirect(`/dashboard/server/${guildId}?error=Title+and+content+required#documents`);
+  const docId = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+  const doc = { id: docId, guildId, title: title.trim(), content: content.trim(), authorId: access.user.id, authorName: access.user.username, createdAt: new Date().toISOString() };
+  await pgDb.set(`doc:${guildId}:${docId}`, doc);
+  res.redirect(`/dashboard/server/${guildId}?success=Document+created#documents`);
+});
+
+dashboardAuthRouter.get('/dashboard/server/:guildId/documents/:docId/delete', async (req, res) => {
+  const { guildId, docId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  await pgDb.delete(`doc:${guildId}:${docId}`);
+  res.redirect(`/dashboard/server/${guildId}?success=Document+deleted#documents`);
+});
+
+// Public read-only document view
+dashboardAuthRouter.get('/dashboard/docs/:guildId/:docId', async (req, res) => {
+  const { guildId, docId } = req.params;
+  const doc = await pgDb.get(`doc:${guildId}:${docId}`);
+  if (!doc) return res.status(404).send('<h2 style="font-family:sans-serif; text-align:center; margin-top:60px; color:#666;">Document not found.</h2>');
+  res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${doc.title}</title>
+  <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; max-width:720px; margin:60px auto; padding:0 24px; color:#e0e0e0; background:#111214; line-height:1.7;}
+  h1{font-size:28px; margin-bottom:8px;} .meta{color:#666; font-size:14px; margin-bottom:32px;} pre{white-space:pre-wrap; font-size:15px;}</style>
+  </head><body><h1>${doc.title}</h1><p class="meta">By ${doc.authorName} &middot; ${new Date(doc.createdAt).toLocaleDateString()}</p><pre>${doc.content}</pre></body></html>`);
+});
+
+// ---- Verification handlers ----
+
+dashboardAuthRouter.post('/dashboard/server/:guildId/verification-channel', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  const channelId = req.body.channelId || null;
+  const current = await getConfigValue({ db }, guildId, 'verification', {});
+  await updateGuildConfig({ db }, guildId, { verification: { ...current, channelId } });
+  res.redirect(`/dashboard/server/${guildId}?success=Verification+channel+saved#verification`);
+});
+
+dashboardAuthRouter.post('/dashboard/server/:guildId/post-verification-panel', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  const verification = await getConfigValue({ db }, guildId, 'verification', {});
+  if (!verification.channelId) return res.redirect(`/dashboard/server/${guildId}?error=No+verification+channel+set#verification`);
+  try {
+    const panelRes = await fetch(`https://discord.com/api/channels/${verification.channelId}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bot ${BOT_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        embeds: [{
+          title: 'Link your Roblox Account',
+          description: 'Click **Link Roblox** to connect your Roblox account and sync your group roles.\n\nAlready linked? Click **Update** to refresh your roles if your rank changed.',
+          color: 0x5865F2,
+        }],
+        components: [{
+          type: 1,
+          components: [
+            { type: 2, style: 3, label: 'Link Roblox', custom_id: 'roblox_link_start' },
+            { type: 2, style: 2, label: 'Update', custom_id: 'roblox_link_update' },
+            { type: 2, style: 1, label: 'Sign in with Roblox', custom_id: 'roblox_oauth_start' },
+          ],
+        }],
+      }),
+    });
+    if (!panelRes.ok) {
+      const err = await panelRes.text();
+      logger.error('Failed to post verification panel:', err);
+      return res.redirect(`/dashboard/server/${guildId}?error=Failed+to+post+panel+%E2%80%94+check+bot+permissions#verification`);
+    }
+    res.redirect(`/dashboard/server/${guildId}?success=Verification+panel+posted#verification`);
+  } catch (err) {
+    logger.error('post-verification-panel error:', err);
+    res.redirect(`/dashboard/server/${guildId}?error=Something+went+wrong#verification`);
+  }
 });
 
 // Auto-create the three audit log channels under a "Phantom Logs" category.
