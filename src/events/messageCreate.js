@@ -7,6 +7,7 @@ import { getConfigValue } from '../services/guildConfig.js';
 import { getRobloxUserByUsername, getGroupRoles, updateGroupMemberRank } from '../utils/roblox.js';
 import { parsePromotionLog, applyFormat, DEFAULT_LOG_FORMAT } from '../services/promotionParser.js';
 import { db } from '../utils/database.js';
+import { handleTTSMessage } from '../commands/Utility/tts.js';
 
 const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
 const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
@@ -17,6 +18,7 @@ export default {
     try {
       if (message.author.bot || !message.guild) return;
 
+      handleTTSMessage(message);
       await handleLeveling(message, client);
       await handleAutoRank(message, client);
     } catch (error) {
