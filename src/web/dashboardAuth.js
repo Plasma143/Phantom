@@ -38,6 +38,22 @@ const COMMANDS_DIR = path.join(__dirname, '../commands');
 
 export const dashboardAuthRouter = Router();
 
+// Post a plain embed to any channel using the bot token (for audit logs from dashboard routes)
+async function sendBotEmbed(channelId, { color = 0x5865F2, title, fields = [] }) {
+  return fetch(`https://discord.com/api/channels/${channelId}/messages`, {
+    method: 'POST',
+    headers: { Authorization: `Bot ${BOT_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      embeds: [{
+        color,
+        title,
+        fields,
+        timestamp: new Date().toISOString(),
+      }],
+    }),
+  });
+}
+
 // Parse form submissions (built into Express — no new dependency).
 // Scoped to this router only, so it doesn't affect anything else.
 dashboardAuthRouter.use(express.urlencoded({ extended: true }));
@@ -497,6 +513,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
             avatar: m.user.avatar
               ? `https://cdn.discordapp.com/avatars/${discordId}/${m.user.avatar}.png?size=32`
               : 'https://cdn.discordapp.com/embed/avatars/0.png',
+            robloxId: String(link.robloxId || ''),
             robloxUsername: link.robloxUsername,
           };
         })
@@ -706,27 +723,36 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
         <div id="tab-members" style="display:none; ${PANEL}">
           <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Linked Members</p>
-          <p style="color:#949ba4; font-size:13px; margin:0 0 20px;">Members who have linked their Roblox account. Click Rank to manage their rank.</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 20px;">Members who have linked their Roblox account. Group ranks load automatically${roblox.openCloudKey ? '' : ' once an Open Cloud key is saved in Rank Management'}.</p>
           ${linkedMembers.length ? `
-          <table style="width:100%; border-collapse:collapse; font-size:14px;">
+          <div style="overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; font-size:14px;" id="membersTable">
             <thead><tr style="border-bottom:1px solid #2b2d31;">
               <th style="text-align:left; padding:8px 10px; color:#949ba4; font-weight:600;">Discord</th>
               <th style="text-align:left; padding:8px 10px; color:#949ba4; font-weight:600;">Roblox</th>
+              <th style="text-align:left; padding:8px 10px; color:#949ba4; font-weight:600;">Group Rank</th>
               <th style="padding:8px 10px;"></th>
             </tr></thead>
             <tbody>
               ${linkedMembers.map((m) => `
               <tr style="border-bottom:1px solid #1a1b1e;">
-                <td style="padding:10px; display:flex; align-items:center; gap:10px;">
-                  <img src="${m.avatar}" width="28" height="28" style="border-radius:50%;" /><span style="color:#fff;">${m.discordName}</span>
+                <td style="padding:10px;">
+                  <div style="display:flex; align-items:center; gap:10px;">
+                    <img src="${m.avatar}" width="28" height="28" style="border-radius:50%;" />
+                    <span style="color:#fff;">${m.discordName}</span>
+                  </div>
                 </td>
                 <td style="padding:10px; color:#949ba4;">${m.robloxUsername}</td>
+                <td style="padding:10px;" id="rank-${m.robloxId}">
+                  <span style="color:#5e6272; font-style:italic; font-size:12px;">loading…</span>
+                </td>
                 <td style="padding:10px;">
                   <button onclick="rankFromMembers('${m.robloxUsername}')" style="padding:5px 12px; background:#5865F2; color:#fff; border:none; border-radius:6px; font-size:13px; cursor:pointer;">Rank</button>
                 </td>
               </tr>`).join('')}
             </tbody>
           </table>
+          </div>
           <p style="color:#949ba4; font-size:13px; margin:16px 0 0;">${linkedMembers.length} linked member${linkedMembers.length !== 1 ? 's' : ''}</p>
           <script>
             function rankFromMembers(username){
@@ -734,6 +760,36 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
               var inp=document.getElementById('rankUsername');
               if(inp){inp.value=username;}
             }
+
+            // Lazy-load group ranks when the Members tab is first shown
+            var ranksLoaded=false;
+            var origShowTab=window.showTab||null;
+            document.getElementById('btn-members').addEventListener('click',function(){
+              if(ranksLoaded)return;
+              ranksLoaded=true;
+              var ids=${JSON.stringify(linkedMembers.map((m)=>m.robloxId).filter(Boolean))};
+              if(!ids.length)return;
+              fetch('/dashboard/server/${guildId}/member-ranks',{
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({robloxIds:ids})
+              }).then(function(r){return r.json();}).then(function(data){
+                Object.entries(data.ranks||{}).forEach(function(e){
+                  var cell=document.getElementById('rank-'+e[0]);
+                  if(!cell)return;
+                  if(e[1]){
+                    cell.innerHTML='<span style="color:#fff;font-weight:600;">'+e[1].rankName+'</span>'
+                      +'<span style="color:#5e6272;font-size:11px;margin-left:6px;">('+e[1].rankValue+')</span>';
+                  } else {
+                    cell.innerHTML='<span style="color:#5e6272;font-style:italic;font-size:12px;">Not in group</span>';
+                  }
+                });
+              }).catch(function(){
+                document.querySelectorAll('[id^="rank-"]').forEach(function(c){
+                  c.innerHTML='<span style="color:#ed4245;font-size:12px;">Error</span>';
+                });
+              });
+            });
           </script>
           ` : `
           <div style="padding:32px; text-align:center; background:#111214; border-radius:10px; border:1px solid #2b2d31;">
@@ -852,6 +908,19 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/group', async (req, res) =>
 
   const current = await getConfigValue({ db }, guildId, 'roblox', {});
   await updateGuildConfig({ db }, guildId, { roblox: { ...current, enabled: true, groupId } });
+
+  // Post to #dashboard-logs
+  const auditCfg = await getConfigValue({ db }, guildId, 'auditLogs', {});
+  if (auditCfg.dashboardChannelId) {
+    await sendBotEmbed(auditCfg.dashboardChannelId, {
+      color: 0x5865F2,
+      title: '⚙️ Group Setup Updated',
+      fields: [
+        { name: 'Changed By', value: access.user.username, inline: true },
+        { name: 'Group', value: `${group.name} (${groupId})`, inline: true },
+      ],
+    }).catch(() => {});
+  }
 
   res.redirect(`/dashboard/server/${guildId}?success=Group+updated`);
 });
@@ -1185,9 +1254,68 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/rank-change', async (req, r
       Number(targetRank),
       roblox.openCloudKey,
     );
+
+    // Post to #roblox-logs if the rank change succeeded
+    if (result.success) {
+      const auditLogs = await getConfigValue({ db }, guildId, 'auditLogs', {});
+      if (auditLogs.robloxChannelId) {
+        await sendBotEmbed(auditLogs.robloxChannelId, {
+          color: 0x5865F2,
+          title: '👑 Rank Changed (Dashboard)',
+          fields: [
+            { name: 'Roblox User', value: req.body.robloxUsername || `ID ${robloxId}`, inline: true },
+            { name: 'New Rank', value: result.newRankName || String(targetRank), inline: true },
+            { name: 'Changed By', value: access.user.username, inline: true },
+          ],
+        }).catch(() => {});
+      }
+    }
+
     return res.json(result);
   } catch (err) {
     logger.error('Rank change error:', err);
     return res.json({ success: false, error: 'Unexpected error during rank change.' });
+  }
+});
+
+// Bulk-fetch group ranks for a list of Roblox user IDs.
+// Body: { robloxIds: ['123', '456', ...] }
+// Returns: { ranks: { '123': { rankName: 'Member', rankValue: 5 }, ... } }
+dashboardAuthRouter.post('/dashboard/server/:guildId/member-ranks', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return res.json({ ranks: {} });
+
+  const { robloxIds } = req.body;
+  if (!Array.isArray(robloxIds) || !robloxIds.length) return res.json({ ranks: {} });
+
+  try {
+    const roblox = await getConfigValue({ db }, guildId, 'roblox', {});
+    if (!roblox.groupId || !roblox.openCloudKey) return res.json({ ranks: {} });
+
+    // Fetch all group roles once — build a map from role path → { rankName, rankValue }
+    const allRoles = await getGroupRoles(roblox.groupId, roblox.openCloudKey);
+    const roleByPath = new Map((allRoles || []).map((r) => [r.path, { rankName: r.displayName, rankValue: r.rank }]));
+
+    // Fetch memberships in parallel (cap at 20 to avoid hammering the API)
+    const ids = robloxIds.slice(0, 20);
+    const results = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const m = await getGroupMembership(roblox.groupId, id, roblox.openCloudKey);
+          if (!m) return [id, null];
+          const role = roleByPath.get(m.role) ?? null;
+          return [id, role];
+        } catch {
+          return [id, null];
+        }
+      })
+    );
+
+    const ranks = Object.fromEntries(results);
+    return res.json({ ranks });
+  } catch (err) {
+    logger.error('member-ranks error:', err);
+    return res.json({ ranks: {} });
   }
 });
