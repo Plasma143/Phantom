@@ -1,8 +1,8 @@
 import { getColor } from '../../config/bot.js';
-import { SlashCommandBuilder, PermissionFlagsBits, ChannelType, MessageFlags } from 'discord.js';
+import { SlashCommandBuilder, PermissionFlagsBits, ChannelType, MessageFlags, EmbedBuilder } from 'discord.js';
 import { createEmbed, errorEmbed } from '../../utils/embeds.js';
-import { getLevelingConfig, saveLevelingConfig } from '../../services/leveling.js';
-import { botHasPermission } from '../../utils/permissionGuard.js';
+import { getLevelingConfig, saveLevelingConfig, addLevels, removeLevels, getUserLevelData, setUserLevel } from '../../services/leveling.js';
+import { botHasPermission, checkUserPermissions } from '../../utils/permissionGuard.js';
 import { TitanBotError, ErrorTypes, handleInteractionError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
@@ -63,6 +63,39 @@ export default {
             subcommand
                 .setName('dashboard')
                 .setDescription('Open the interactive leveling configuration dashboard'),
+        )
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName('add')
+                .setDescription('Add levels to a user')
+                .addUserOption((option) =>
+                    option.setName('user').setDescription('The user to add levels to').setRequired(true),
+                )
+                .addIntegerOption((option) =>
+                    option.setName('levels').setDescription('Number of levels to add').setRequired(true).setMinValue(1),
+                ),
+        )
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName('remove')
+                .setDescription('Remove levels from a user')
+                .addUserOption((option) =>
+                    option.setName('user').setDescription('The user to remove levels from').setRequired(true),
+                )
+                .addIntegerOption((option) =>
+                    option.setName('levels').setDescription('Number of levels to remove').setRequired(true).setMinValue(1),
+                ),
+        )
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName('set')
+                .setDescription("Set a user's level to a specific value")
+                .addUserOption((option) =>
+                    option.setName('user').setDescription('The user to update').setRequired(true),
+                )
+                .addIntegerOption((option) =>
+                    option.setName('level').setDescription('The level to set').setRequired(true).setMinValue(0),
+                ),
         ),
     category: 'Leveling',
 
@@ -88,6 +121,63 @@ export default {
 
             if (subcommand === 'dashboard') {
                 return levelDashboard.execute(interaction, config, client);
+            }
+
+            // Shared leveling-disabled check for admin subcommands
+            const requireLevelingEnabled = async () => {
+                const cfg = await getLevelingConfig(client, interaction.guildId);
+                if (!cfg?.enabled) {
+                    await InteractionHelper.safeEditReply(interaction, {
+                        embeds: [new EmbedBuilder().setColor('#f1c40f').setDescription('The leveling system is currently disabled on this server.')],
+                        flags: MessageFlags.Ephemeral,
+                    });
+                    return null;
+                }
+                return cfg;
+            };
+
+            const requireMember = async (targetUser) => {
+                const member = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
+                if (!member) throw new TitanBotError(`User ${targetUser.id} not in guild`, ErrorTypes.USER_INPUT, 'The specified user is not in this server.');
+                return member;
+            };
+
+            if (subcommand === 'add') {
+                if (!await requireLevelingEnabled()) return;
+                const targetUser  = interaction.options.getUser('user');
+                const levelsToAdd = interaction.options.getInteger('levels');
+                await requireMember(targetUser);
+                const userData = await addLevels(client, interaction.guildId, targetUser.id, levelsToAdd);
+                logger.info(`[ADMIN] ${interaction.user.tag} added ${levelsToAdd} levels to ${targetUser.tag} in ${interaction.guildId}`);
+                return InteractionHelper.safeEditReply(interaction, {
+                    embeds: [createEmbed({ title: '✅ Levels Added', description: `Added **${levelsToAdd}** levels to ${targetUser.tag}.\n**New Level:** ${userData.level}`, color: 'success' })],
+                });
+            }
+
+            if (subcommand === 'remove') {
+                if (!await requireLevelingEnabled()) return;
+                const targetUser     = interaction.options.getUser('user');
+                const levelsToRemove = interaction.options.getInteger('levels');
+                await requireMember(targetUser);
+                const existing = await getUserLevelData(client, interaction.guildId, targetUser.id);
+                if (existing.level === 0) throw new TitanBotError('Already min level', ErrorTypes.VALIDATION, `${targetUser.tag} is already at level 0.`);
+                const updated = await removeLevels(client, interaction.guildId, targetUser.id, levelsToRemove);
+                logger.info(`[ADMIN] ${interaction.user.tag} removed ${levelsToRemove} levels from ${targetUser.tag} in ${interaction.guildId}`);
+                return InteractionHelper.safeEditReply(interaction, {
+                    embeds: [createEmbed({ title: '✅ Levels Removed', description: `Removed **${levelsToRemove}** levels from ${targetUser.tag}.\n**New Level:** ${updated.level}`, color: 'success' })],
+                });
+            }
+
+            if (subcommand === 'set') {
+                if (!await requireLevelingEnabled()) return;
+                const targetUser = interaction.options.getUser('user');
+                const newLevel   = interaction.options.getInteger('level');
+                await requireMember(targetUser);
+                const userData = await setUserLevel(client, interaction.guildId, targetUser.id, newLevel);
+                logger.info(`[ADMIN] ${interaction.user.tag} set ${targetUser.tag}'s level to ${newLevel} in ${interaction.guildId}`);
+                return InteractionHelper.safeEditReply(interaction, {
+                    embeds: [createEmbed({ title: '✅ Level Set', description: `Set ${targetUser.tag}'s level to **${newLevel}**.\n**Total XP:** ${userData.totalXp}`, color: 'success' })],
+                });
             }
 
             if (subcommand === 'setup') {
