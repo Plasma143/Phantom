@@ -39,13 +39,7 @@ export default {
       return interaction.editReply({
         embeds: [new EmbedBuilder()
           .setColor(0x7c3aed)
-          .setTitle('🎵 Now Playing' )
-          .setDescription(`**[${track.title}](${track.url})**`)
-          .addFields(
-            { name: 'Duration', value: track.duration, inline: true },
-            { name: 'Author', value: track.author || 'Unknown', inline: true },
-            { name: 'Requested by', value: `${interaction.user}`, inline: true },
-          )
+          .setDescription(`✅ **[${track.title}](${track.url})** added to queue`)
           .setThumbnail(track.thumbnail)
         ],
       });
