@@ -52,6 +52,14 @@ class PhantomBot extends Client {
 
   async start() {
     try {
+      // Validate required environment variables before doing anything else
+      const requiredEnvVars = ['DISCORD_TOKEN', 'CLIENT_ID'];
+      const missingEnvVars = requiredEnvVars.filter(v => !process.env[v]);
+      if (missingEnvVars.length > 0) {
+        logger.error(`Missing required environment variables: ${missingEnvVars.join(', ')}`);
+        process.exit(1);
+      }
+
       startupLog('Starting PhantomBot...');
       await new Promise(resolve => setTimeout(resolve, 1000));
       
@@ -168,6 +176,21 @@ class PhantomBot extends Client {
       next();
     });
 
+    // Periodically evict expired entries from the rate-limiter map to prevent
+    // unbounded memory growth from accumulating stale IP records.
+    setInterval(() => {
+      const now = Date.now();
+      const windowStart = now - windowMs;
+      for (const [ip, times] of requestCounts) {
+        const valid = times.filter(t => t > windowStart);
+        if (valid.length === 0) {
+          requestCounts.delete(ip);
+        } else {
+          requestCounts.set(ip, valid);
+        }
+      }
+    }, 60000);
+
     app.get('/health', (req, res) => {
       const dbStatus = this.db?.getStatus?.() || { isDegraded: 'unknown' };
       const status = {
@@ -184,8 +207,17 @@ class PhantomBot extends Client {
     });
 
     app.get('/ready', (req, res) => {
+      // Guard against hanging requests with a 5-second hard timeout.
+      const timeout = setTimeout(() => {
+        if (!res.headersSent) {
+          res.status(503).json({ ready: false, reason: 'Health check timed out' });
+        }
+      }, 5000);
+
       const dbStatus = this.db?.getStatus?.() || { isDegraded: true };
       const isReady = this.isReady() && !dbStatus.isDegraded;
+
+      clearTimeout(timeout);
 
       if (isReady) {
         return res.status(200).json({
@@ -766,12 +798,11 @@ try {
     
     process.on('uncaughtException', (error) => {
       logger.error('Uncaught Exception:', error);
-      bot.shutdown('UNCAUGHT_EXCEPTION');
+      process.exit(1);
     });
-    
+
     process.on('unhandledRejection', (reason, promise) => {
       logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
-      bot.shutdown('UNHANDLED_REJECTION');
     });
   };
   
