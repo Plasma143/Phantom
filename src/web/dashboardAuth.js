@@ -460,13 +460,14 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
     const { guild, user } = access;
 
-    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification] = await Promise.all([
+    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification, autoRank] = await Promise.all([
       fetch(`https://discord.com/api/guilds/${guildId}/roles`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       fetch(`https://discord.com/api/guilds/${guildId}/channels`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       fetch(`https://discord.com/api/guilds/${guildId}/members?limit=1000`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       getConfigValue({ db }, guildId, 'roblox', {}),
       getConfigValue({ db }, guildId, 'auditLogs', {}),
       getConfigValue({ db }, guildId, 'verification', {}),
+      getConfigValue({ db }, guildId, 'autoRank', {}),
     ]);
 
     const allRoles = rolesRes.ok ? await rolesRes.json() : [];
@@ -637,6 +638,48 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
             }
           </script>
           ` : `<p style="color:#949ba4; padding:16px; background:#111214; border-radius:8px; border:1px solid #2b2d31; font-size:14px;">${roblox.groupId ? 'Save an Open Cloud API key above to enable rank changes.' : 'Set a Roblox Group ID in Group Setup first.'}</p>`}
+
+          <hr style="border:none; border-top:1px solid #2b2d31; margin:28px 0;" />
+
+          <p style="font-weight:700; margin:0 0 4px; font-size:15px;">&#x1F916; Auto-Rank from Promotion Logs</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 20px; line-height:1.6;">
+            Phantom watches a channel for promotion log messages and automatically applies the rank on Roblox.
+            It uses AI to read <strong style="color:#fff;">any format</strong> — no regex, no rigid templates needed.
+            You can optionally define a preferred format to share with your rankers.
+          </p>
+
+          <form method="POST" action="/dashboard/server/${guildId}/auto-rank">
+            <div style="display:flex; align-items:center; gap:12px; margin-bottom:20px; background:#111214; padding:14px 16px; border-radius:8px; border:1px solid #2b2d31;">
+              <input type="checkbox" name="enabled" id="autoRankEnabled" value="1" ${autoRank.enabled ? 'checked' : ''} style="width:16px; height:16px; accent-color:#5865F2; cursor:pointer;" />
+              <label for="autoRankEnabled" style="color:#fff; font-size:14px; font-weight:600; cursor:pointer;">Enable auto-ranking</label>
+            </div>
+
+            <p style="font-weight:700; margin:0 0 6px; font-size:14px; color:#fff;">&#x1F441; Watch Channel</p>
+            <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Phantom reads every message here looking for promotion logs.</p>
+            <select name="watchChannelId" style="width:100%; ${fieldStyle} margin-bottom:20px;">
+              <option value="">-- None --</option>
+              ${channelOptions(autoRank.watchChannelId)}
+            </select>
+
+            <p style="font-weight:700; margin:0 0 6px; font-size:14px; color:#fff;">&#x1F4CB; Confirmation Log Channel</p>
+            <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">After applying a rank, Phantom posts a confirmation here.</p>
+            <select name="logChannelId" style="width:100%; ${fieldStyle} margin-bottom:20px;">
+              <option value="">-- None --</option>
+              ${channelOptions(autoRank.logChannelId)}
+            </select>
+
+            <p style="font-weight:700; margin:0 0 6px; font-size:14px; color:#fff;">&#x1F4DD; Custom Log Format <span style="color:#949ba4; font-weight:400;">(optional)</span></p>
+            <p style="color:#949ba4; font-size:13px; margin:0 0 6px; line-height:1.6;">
+              Define how the confirmation message looks. Variables: <code style="background:#2b2d31; padding:2px 5px; border-radius:4px;">{username}</code>
+              <code style="background:#2b2d31; padding:2px 5px; border-radius:4px;">{newRank}</code>
+              <code style="background:#2b2d31; padding:2px 5px; border-radius:4px;">{reason}</code>
+              <code style="background:#2b2d31; padding:2px 5px; border-radius:4px;">{ranker}</code>
+            </p>
+            <p style="color:#5865F2; font-size:12px; margin:0 0 10px;">You can also share this format with your rankers so they know the preferred layout — Phantom reads any format regardless.</p>
+            <textarea name="customFormat" rows="6" placeholder="Leave blank to use default format:&#10;&#10;👑 **Promotion**&#10;**User:** {username}&#10;**New Rank:** {newRank}&#10;**Reason:** {reason}&#10;**Ranked by:** {ranker}" style="width:100%; ${fieldStyle} resize:vertical; font-family:monospace; font-size:13px; line-height:1.6; box-sizing:border-box; margin-bottom:20px;">${autoRank.customFormat || ''}</textarea>
+
+            <button type="submit" style="${buttonStyle}">Save Auto-Rank Settings</button>
+          </form>
         </div>
 
         <div id="tab-audit-logs" style="display:none; ${PANEL}">
@@ -863,6 +906,23 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/rank-roles/remove', async (
 });
 
 // ---- Rank management handlers ----
+
+dashboardAuthRouter.post('/dashboard/server/:guildId/auto-rank', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const enabled         = req.body.enabled === '1';
+  const watchChannelId  = req.body.watchChannelId  || null;
+  const logChannelId    = req.body.logChannelId     || null;
+  const customFormat    = (req.body.customFormat || '').trim() || null;
+
+  await updateGuildConfig({ db }, guildId, {
+    autoRank: { enabled, watchChannelId, logChannelId, customFormat },
+  });
+
+  res.redirect(`/dashboard/server/${guildId}?success=Auto-rank+settings+saved#rank-management`);
+});
 
 dashboardAuthRouter.post('/dashboard/server/:guildId/open-cloud-key', async (req, res) => {
   const { guildId } = req.params;
