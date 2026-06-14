@@ -575,10 +575,10 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
     if (req.query.success) banner = `<div style="background:#1a3a2a; color:#57f287; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #2d5a3d; font-size:14px;">&#x2705; ${req.query.success}</div>`;
     else if (req.query.error) banner = `<div style="background:#3a1a1a; color:#ed4245; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #5a2d2d; font-size:14px;">&#x274C; ${req.query.error}</div>`;
 
-    const TAB = 'padding:9px 16px; border:none; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; transition:all 0.15s; white-space:nowrap;';
+    const TAB = 'padding:7px 12px; border:none; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.15s; white-space:nowrap; flex-shrink:0;';
     const ACTIVE = TAB + ' background:#5865F2; color:#fff;';
     const INACTIVE = TAB + ' background:transparent; color:#949ba4;';
-    const PANEL = 'background:#1e2124; border-radius:12px; padding:24px;';
+    const PANEL = 'background:#1e2124; border-radius:12px; padding:24px; min-height:480px; max-height:calc(100vh - 280px); overflow-y:auto;';
 
     const verChanName = textChannels.find((c) => c.id === verification.channelId);
 
@@ -594,7 +594,8 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
       <div style="max-width:700px; margin:0 auto; text-align:left;">
 
-        <div style="display:flex; gap:3px; background:#111214; padding:4px; border-radius:10px; margin-bottom:20px; overflow-x:auto; flex-wrap:wrap;">
+        <div style="display:flex; gap:3px; background:#111214; padding:4px; border-radius:10px; margin-bottom:16px; overflow-x:auto; flex-wrap:nowrap; scrollbar-width:none;">
+          <style>.tab-bar::-webkit-scrollbar{display:none}</style>
           <button id="btn-overview" style="${ACTIVE}" onclick="showTab('overview',this)">&#128202; Overview</button>
           <button id="btn-group-setup" style="${INACTIVE}" onclick="showTab('group-setup',this)">&#9881;&#65039; Group Setup</button>
           <button id="btn-rank-management" style="${INACTIVE}" onclick="showTab('rank-management',this)">&#128081; Rank Management${!isPremium ? ' 🔒' : ''}</button>
@@ -634,20 +635,20 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
           <!-- Quick actions -->
           <p style="color:#fff; font-weight:700; font-size:15px; margin:0 0 12px;">Quick Actions</p>
-          <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px;">
+          <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px;">
             ${[
               { tab: 'group-setup',     icon: '⚙️', title: 'Group Setup',     desc: roblox.groupId ? 'Change group or rank roles' : 'Connect your Roblox group' },
-              { tab: 'rank-management', icon: '👑', title: 'Rank a Member',    desc: 'Promote or demote directly' },
-              { tab: 'members',         icon: '👥', title: 'Members',          desc: `${linkedMembers.length} linked account${linkedMembers.length !== 1 ? 's' : ''}` },
-              { tab: 'verification',    icon: '🔔', title: 'Verification',     desc: 'Post the link panel to a channel' },
+              { tab: 'rank-management', icon: '👑', title: 'Rank Management',  desc: 'Promote or demote directly' },
+              { tab: 'members',         icon: '👥', title: 'Members',          desc: `${linkedMembers.length} linked` },
+              { tab: 'verification',    icon: '🔔', title: 'Verification',     desc: 'Post the link panel' },
               { tab: 'audit-logs',      icon: '📋', title: 'Audit Logs',       desc: 'Configure log channels' },
-              { tab: 'documents',       icon: '📄', title: 'Documents',        desc: 'Server SOPs and policies' },
+              { tab: 'join-requests',   icon: '📨', title: 'Join Requests',    desc: 'Accept pending members' },
             ].map(({ tab, icon, title, desc }) => `
               <button onclick="showTab('${tab}',document.getElementById('btn-${tab}'))"
-                style="background:#111214; border:1px solid #2b2d31; border-radius:10px; padding:14px; text-align:left; cursor:pointer; transition:border-color .15s;" 
+                style="background:#111214; border:1px solid #2b2d31; border-radius:8px; padding:10px 12px; text-align:left; cursor:pointer; transition:border-color .15s;"
                 onmouseover="this.style.borderColor='#5865F2'" onmouseout="this.style.borderColor='#2b2d31'">
-                <p style="color:#fff; font-weight:700; font-size:14px; margin:0 0 4px;">${icon} ${title}</p>
-                <p style="color:#949ba4; font-size:12px; margin:0;">${desc}</p>
+                <p style="color:#fff; font-weight:700; font-size:13px; margin:0 0 2px;">${icon} ${title}</p>
+                <p style="color:#949ba4; font-size:11px; margin:0;">${desc}</p>
               </button>`).join('')}
           </div>
         </div>
