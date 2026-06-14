@@ -136,9 +136,29 @@ export default {
       if (playlists[name].length >= MAX_SONGS_PER_PLAYLIST) {
         return interaction.editReply({ embeds: [errEmbed(`Playlist **${name}** is full (${MAX_SONGS_PER_PLAYLIST} songs max).`)] });
       }
-      playlists[name].push(song);
+
+      // Resolve the track now so we store the URL (reliable) not a raw search query
+      const player = useMainPlayer();
+      let trackUrl = song;
+      let displayName = song;
+      try {
+        const result = await Promise.race([
+          player.search(song, { requestedBy: interaction.user }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+        ]);
+        if (result?.hasTracks()) {
+          trackUrl    = result.tracks[0].url;
+          displayName = result.tracks[0].title;
+        } else {
+          return interaction.editReply({ embeds: [errEmbed(`Couldn't find a track for **${song}**. Try a different search or paste a YouTube URL.`)] });
+        }
+      } catch {
+        return interaction.editReply({ embeds: [errEmbed(`Couldn't find that song. Try a different search or YouTube URL.`)] });
+      }
+
+      playlists[name].push(trackUrl);
       await saveUserPlaylists(userId, playlists);
-      return interaction.editReply({ embeds: [successEmbed(`Added **${song}** to **${name}**. (${playlists[name].length}/${MAX_SONGS_PER_PLAYLIST} songs)`)] });
+      return interaction.editReply({ embeds: [successEmbed(`Added **${displayName}** to **${name}**. (${playlists[name].length}/${MAX_SONGS_PER_PLAYLIST} songs)`)] });
     }
 
     // REMOVE
