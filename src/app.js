@@ -3,6 +3,8 @@ import { Client, Collection, GatewayIntentBits } from 'discord.js';
 import { REST } from '@discordjs/rest';
 import express from 'express';
 import cron from 'node-cron';
+import { Player } from 'discord-player';
+import { DefaultExtractors } from '@discord-player/extractor';
 
 import config from './config/application.js';
 import { initializeDatabase } from './utils/database.js';
@@ -86,6 +88,12 @@ class PhantomBot extends Client {
       startupLog('Logging into Discord...');
       await this.login(this.config.bot.token);
       startupLog('Discord login successful');
+
+      startupLog('Initialising music player...');
+      const player = new Player(this);
+      await player.extractors.loadMulti(DefaultExtractors);
+      this.player = player;
+      startupLog('Music player ready');
       
       startupLog('Registering slash commands...');
       await this.registerCommands();
