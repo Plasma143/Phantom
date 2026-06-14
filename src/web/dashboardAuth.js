@@ -23,7 +23,7 @@ import { getConfigValue, updateGuildConfig } from '../services/guildConfig.js';
 import { db } from '../utils/database.js';
 import { pgDb } from '../utils/postgresDatabase.js';
 import { getRobloxGroupInfo, getRobloxUserByUsername, getGroupRoles, getGroupMembership, updateGroupMemberRank } from '../utils/roblox.js';
-import { getSubscription, getTier, getBoostDiscount } from './stripePayments.js';
+import { getSubscription, getTier, getBoostDiscount, isOwner } from './stripePayments.js';
 
 const PUBLIC_URL = process.env.PUBLIC_URL || 'https://phantom1.up.railway.app';
 const REDIRECT_URI = `${PUBLIC_URL}/dashboard/auth/callback`;
@@ -545,7 +545,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           </li>`).join('')
       : '<li style="color:#888;"><em>None set</em></li>';
 
-    const tier = getTier(subscription);
+    const tier = isOwner(user.id) ? 'enterprise' : getTier(subscription);
     const isPremium = tier === 'premium' || tier === 'enterprise';
     const isEnterprise = tier === 'enterprise';
 
