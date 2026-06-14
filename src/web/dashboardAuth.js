@@ -689,6 +689,14 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
           <form method="POST" action="/dashboard/server/${guildId}/audit-logs">
 
+            <div style="background:#111214; border:1px solid #2b2d31; border-radius:10px; padding:16px; margin-bottom:24px; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+              <div>
+                <p style="color:#fff; font-weight:700; margin:0 0 4px; font-size:14px;">🤖 Auto-Create Log Channels</p>
+                <p style="color:#949ba4; font-size:13px; margin:0;">Creates a <strong style="color:#fff;">📋 Phantom Logs</strong> category with <strong style="color:#fff;">#discord-logs</strong>, <strong style="color:#fff;">#roblox-logs</strong>, and <strong style="color:#fff;">#dashboard-logs</strong> — and saves them automatically.</p>
+              </div>
+              <a href="/dashboard/server/${guildId}/create-log-channels" style="display:inline-block; padding:10px 18px; background:#5865F2; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; font-weight:600; white-space:nowrap;">Create Channels</a>
+            </div>
+
             <p style="font-weight:700; margin:0 0 4px; font-size:15px;">🔔 Discord Events</p>
             <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Logs joins, leaves, kicks, bans, and role changes in your server.</p>
             <select name="discordChannelId" style="width:100%; ${fieldStyle} margin-bottom:24px;">
@@ -1011,6 +1019,77 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/audit-logs', async (req, re
   });
 
   res.redirect(`/dashboard/server/${guildId}?success=Audit+log+channels+saved#audit-logs`);
+});
+
+// Auto-create the three audit log channels under a "Phantom Logs" category.
+dashboardAuthRouter.get('/dashboard/server/:guildId/create-log-channels', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  try {
+    const base = 'https://discord.com/api';
+    const headers = {
+      Authorization: `Bot ${BOT_TOKEN}`,
+      'Content-Type': 'application/json',
+    };
+
+    // 1. Create the category
+    const categoryRes = await fetch(`${base}/guilds/${guildId}/channels`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: '📋 Phantom Logs', type: 4 }),
+    });
+
+    if (!categoryRes.ok) {
+      const err = await categoryRes.text();
+      logger.error('Failed to create log category:', err);
+      return res.redirect(`/dashboard/server/${guildId}?error=Could+not+create+channels+%E2%80%94+check+bot+permissions#audit-logs`);
+    }
+
+    const category = await categoryRes.json();
+
+    // 2. Create the three text channels under it
+    const channelDefs = [
+      { key: 'discordChannelId', name: 'discord-logs', topic: 'Discord server events — joins, leaves, kicks, bans, role changes.' },
+      { key: 'robloxChannelId', name: 'roblox-logs', topic: 'Roblox group rank changes made via the Phantom dashboard.' },
+      { key: 'dashboardChannelId', name: 'dashboard-logs', topic: 'Admin actions taken on the Phantom dashboard — settings changes, key updates.' },
+    ];
+
+    const savedIds = {};
+
+    for (const def of channelDefs) {
+      const chRes = await fetch(`${base}/guilds/${guildId}/channels`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: def.name,
+          type: 0,
+          parent_id: category.id,
+          topic: def.topic,
+        }),
+      });
+
+      if (chRes.ok) {
+        const ch = await chRes.json();
+        savedIds[def.key] = ch.id;
+      } else {
+        const err = await chRes.text();
+        logger.error(`Failed to create #${def.name}:`, err);
+      }
+    }
+
+    // 3. Save whatever we managed to create
+    const current = await getConfigValue({ db }, guildId, 'auditLogs', {});
+    await updateGuildConfig({ db }, guildId, {
+      auditLogs: { ...current, ...savedIds },
+    });
+
+    res.redirect(`/dashboard/server/${guildId}?success=Log+channels+created+successfully#audit-logs`);
+  } catch (err) {
+    logger.error('create-log-channels error:', err);
+    res.redirect(`/dashboard/server/${guildId}?error=Something+went+wrong+creating+channels#audit-logs`);
+  }
 });
 });
 
