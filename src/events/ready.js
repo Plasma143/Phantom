@@ -20,25 +20,23 @@ export default {
         .filter(cmd => cmd.data && typeof cmd.data.toJSON === 'function')
         .map(cmd => cmd.data.toJSON());
 
-      // 1. Register globally (takes up to 1hr to propagate but covers all future servers)
+      // Clear guild-specific commands from all guilds (removes duplicates)
+      for (const [, guild] of client.guilds.cache) {
+        try {
+          await guild.commands.set([]);
+        } catch (err) {
+          logger.warn(`Could not clear guild commands for ${guild.name}: ${err.message}`);
+        }
+      }
+      startupLog('✅ Cleared guild-specific commands (using global only)');
+
+      // Register globally — appears in every server, no duplicates
       try {
         await client.application.commands.set(commands);
         startupLog(`✅ Registered ${commands.length} commands globally`);
       } catch (err) {
         logger.error('Global command registration failed:', err.message);
       }
-
-      // 2. Register in every current guild immediately (instant, no propagation delay)
-      let guildSuccesses = 0;
-      for (const [, guild] of client.guilds.cache) {
-        try {
-          await guild.commands.set(commands);
-          guildSuccesses++;
-        } catch (err) {
-          logger.warn(`Failed to register commands in ${guild.name}: ${err.message}`);
-        }
-      }
-      startupLog(`✅ Registered commands in ${guildSuccesses}/${client.guilds.cache.size} guilds`);
 
       const reconciliationSummary = await reconcileReactionRoleMessages(client);
       startupLog(
