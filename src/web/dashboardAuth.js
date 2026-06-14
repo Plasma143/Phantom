@@ -946,6 +946,8 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
             <button type="submit" style="${buttonStyle}">Save Auto-Rank Settings</button>
           </form>
+        </div>
+
         <div id="tab-join-requests" style="display:none; ${PANEL}">
           <p style="font-weight:700; font-size:18px; margin:0 0 6px;">&#x1F4E8; Group Join Requests</p>
           <p style="color:#949ba4; font-size:13px; margin:0 0 24px; line-height:1.6;">
