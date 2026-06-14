@@ -511,6 +511,10 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           const link = await pgDb.get(`roblox_link:${discordId}`);
           if (!link) return null;
           const m = guildMemberMap.get(discordId);
+          const topRole = (m.roles || [])
+            .map((rid) => ({ id: rid, name: roleMap.get(rid) || '', pos: (allRoles.find(r => r.id === rid) || {}).position || 0 }))
+            .filter((r) => r.name && r.id !== guildId)
+            .sort((a, b) => b.pos - a.pos)[0];
           return {
             discordId,
             discordName: m.nick || m.user.username,
