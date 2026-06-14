@@ -477,7 +477,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
     const { guild, user } = access;
 
-    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification, autoRank, enterprise, subscription, boostDiscount] = await Promise.all([
+    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification, autoRank, enterprise, securityRaw, subscription, boostDiscount] = await Promise.all([
       fetch(`https://discord.com/api/guilds/${guildId}/roles`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       fetch(`https://discord.com/api/guilds/${guildId}/channels`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       fetch(`https://discord.com/api/guilds/${guildId}/members?limit=1000`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
@@ -486,6 +486,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
       getConfigValue({ db }, guildId, 'verification', {}),
       getConfigValue({ db }, guildId, 'autoRank', {}),
       getConfigValue({ db }, guildId, 'enterprise', {}),
+      pgDb.get(`security:${guildId}`),
       getSubscription(guildId),
       getBoostDiscount(user.id),
     ]);
@@ -560,6 +561,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
     const tier = isOwner(user.id) ? 'enterprise' : getTier(subscription);
     const isPremium = tier === 'premium' || tier === 'enterprise';
     const isEnterprise = tier === 'enterprise';
+    const security = { minAccountAgeDays: 0, newAccountAction: 'none', newAccountRoleId: null, newAccountLogChannel: null, raidProtection: false, raidThreshold: 10, raidWindowSeconds: 30, raidAction: 'lockdown', lockdownActive: false, ...(securityRaw || {}) };
 
     // Upgrade banner for free servers
     const boostBadge = boostDiscount
@@ -587,10 +589,10 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
     if (req.query.success) banner = `<div style="background:#1a3a2a; color:#57f287; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #2d5a3d; font-size:14px;">&#x2705; ${req.query.success}</div>`;
     else if (req.query.error) banner = `<div style="background:#3a1a1a; color:#ed4245; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #5a2d2d; font-size:14px;">&#x274C; ${req.query.error}</div>`;
 
-    const TAB = 'padding:7px 12px; border:none; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.15s; white-space:nowrap; flex-shrink:0;';
+    const TAB = 'padding:7px 12px; border:none; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.15s; white-space:nowrap; flex-shrink:0; flex-grow:1; flex-basis:calc(20% - 3px);';
     const ACTIVE = TAB + ' background:#5865F2; color:#fff;';
     const INACTIVE = TAB + ' background:transparent; color:#949ba4;';
-    const PANEL = 'background:#1e2124; border-radius:12px; padding:24px; min-height:480px; max-height:calc(100vh - 280px); overflow-y:auto;';
+    const PANEL = 'background:#1e2124; border-radius:12px; padding:24px; min-height:420px;';
 
     const verChanName = textChannels.find((c) => c.id === verification.channelId);
 
@@ -606,8 +608,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
       <div style="max-width:700px; margin:0 auto; text-align:left;">
 
-        <div style="display:flex; gap:3px; background:#111214; padding:4px; border-radius:10px; margin-bottom:16px; overflow-x:auto; flex-wrap:nowrap; scrollbar-width:none;">
-          <style>.tab-bar::-webkit-scrollbar{display:none}</style>
+        <div style="display:flex; gap:3px; background:#111214; padding:4px; border-radius:10px; margin-bottom:16px; flex-wrap:wrap;">
           <button id="btn-overview" style="${ACTIVE}" onclick="showTab('overview',this)">&#128202; Overview</button>
           <button id="btn-group-setup" style="${INACTIVE}" onclick="showTab('group-setup',this)">&#9881;&#65039; Group Setup</button>
           <button id="btn-rank-management" style="${INACTIVE}" onclick="showTab('rank-management',this)">&#128081; Rank Management${!isPremium ? ' 🔒' : ''}</button>
@@ -618,6 +619,8 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           <button id="btn-join-requests" style="${INACTIVE}" onclick="showTab('join-requests',this)">&#x1F4E8; Join Requests${!isPremium ? ' 🔒' : ''}</button>
           <button id="btn-rank-history" style="${INACTIVE}" onclick="showTab('rank-history',this)">📜 Rank History${!isEnterprise ? ' 💎' : ''}</button>
           <button id="btn-enterprise" style="${INACTIVE}" onclick="showTab('enterprise',this)">💎 Enterprise${!isEnterprise ? ' 💎' : ''}</button>
+          <button id="btn-messages" style="${INACTIVE}" onclick="showTab('messages',this)">📨 Messages</button>
+          <button id="btn-security" style="${INACTIVE}" onclick="showTab('security',this)">🔐 Security</button>
         </div>
 
         <!-- ── Tab: Overview ── -->
@@ -1376,8 +1379,181 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           `}
         </div>
 
+        <!-- ── Tab: Messages ── -->
+        <div id="tab-messages" style="display:none; ${PANEL}">
+          <p style="font-weight:700; font-size:18px; margin:0 0 4px;">📨 Message Builder</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 20px;">Compose and send custom embeds through the bot. For complex embeds use the <code style="background:#111214;padding:2px 5px;border-radius:4px;">/embed</code> command in Discord.</p>
+
+          <div style="display:flex; gap:16px; flex-wrap:wrap;">
+            <!-- Composer -->
+            <div style="flex:1; min-width:280px;">
+              <p style="font-weight:700; font-size:13px; margin:0 0 8px; color:#fff;">Channel</p>
+              <select id="msgChannel" style="width:100%; ${fieldStyle} margin-bottom:12px;">
+                <option value="">-- Select channel --</option>
+                ${channelOptions('')}
+              </select>
+              <p style="font-weight:700; font-size:13px; margin:0 0 6px; color:#fff;">Title</p>
+              <input type="text" id="msgTitle" placeholder="Embed title" maxlength="256" style="width:100%; ${fieldStyle} margin-bottom:12px; box-sizing:border-box;" oninput="updatePreview()" />
+              <p style="font-weight:700; font-size:13px; margin:0 0 6px; color:#fff;">Description</p>
+              <textarea id="msgDesc" rows="5" placeholder="Main body text (supports **bold**, *italic*, and other markdown)" style="width:100%; ${fieldStyle} resize:vertical; font-family:inherit; margin-bottom:12px; box-sizing:border-box;" oninput="updatePreview()"></textarea>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;">
+                <div>
+                  <p style="font-weight:700; font-size:13px; margin:0 0 6px; color:#fff;">Colour</p>
+                  <div style="display:flex; gap:6px;">
+                    <input type="color" id="msgColorPicker" value="#5865F2" oninput="document.getElementById('msgColor').value=this.value.replace('#',''); updatePreview()" style="width:40px;height:36px;padding:2px;background:#111214;border:1px solid #2b2d31;border-radius:6px;cursor:pointer;" />
+                    <input type="text" id="msgColor" placeholder="5865F2" maxlength="6" value="5865F2" oninput="document.getElementById('msgColorPicker').value='#'+this.value; updatePreview()" style="flex:1; ${fieldStyle}" />
+                  </div>
+                </div>
+                <div>
+                  <p style="font-weight:700; font-size:13px; margin:0 0 6px; color:#fff;">Footer</p>
+                  <input type="text" id="msgFooter" placeholder="Footer text" maxlength="2048" style="width:100%; ${fieldStyle} box-sizing:border-box;" oninput="updatePreview()" />
+                </div>
+              </div>
+              <p style="font-weight:700; font-size:13px; margin:0 0 6px; color:#fff;">Image URL <span style="color:#949ba4;font-weight:400;">(optional)</span></p>
+              <input type="text" id="msgImage" placeholder="https://..." style="width:100%; ${fieldStyle} margin-bottom:12px; box-sizing:border-box;" />
+              <p style="font-weight:700; font-size:13px; margin:0 0 6px; color:#fff;">Author <span style="color:#949ba4;font-weight:400;">(optional)</span></p>
+              <input type="text" id="msgAuthor" placeholder="Author name shown above title" maxlength="256" style="width:100%; ${fieldStyle} margin-bottom:16px; box-sizing:border-box;" />
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button onclick="sendEmbed()" style="${buttonStyle}; flex:1;">Send Embed</button>
+                <button onclick="sendEmbed(true)" style="padding:10px 16px; background:#2b2d31; color:#fff; border:none; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer;">+ @here</button>
+              </div>
+              <p id="msgStatus" style="font-size:13px; margin:10px 0 0; color:#949ba4;"></p>
+            </div>
+
+            <!-- Live preview -->
+            <div style="flex:1; min-width:260px;">
+              <p style="font-weight:700; font-size:13px; margin:0 0 8px; color:#fff;">Live Preview</p>
+              <div style="background:#313338; border-radius:8px; padding:16px;">
+                <div id="previewEmbed" style="background:#2b2d31; border-left:4px solid #5865F2; border-radius:4px; padding:12px; font-family:sans-serif;">
+                  <p id="previewAuthor" style="color:#949ba4; font-size:12px; margin:0 0 4px; display:none;"></p>
+                  <p id="previewTitle" style="color:#fff; font-weight:700; font-size:15px; margin:0 0 6px;"></p>
+                  <p id="previewDesc" style="color:#dbdee1; font-size:14px; margin:0 0 8px; white-space:pre-wrap; line-height:1.5;"></p>
+                  <p id="previewFooter" style="color:#949ba4; font-size:11px; margin:0; display:none;"></p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <script>
+            function updatePreview(){
+              var color='#'+(document.getElementById('msgColor').value||'5865F2');
+              document.getElementById('previewEmbed').style.borderLeftColor=color;
+              var title=document.getElementById('msgTitle').value;
+              var desc=document.getElementById('msgDesc').value;
+              var footer=document.getElementById('msgFooter').value;
+              var author=document.getElementById('msgAuthor').value;
+              document.getElementById('previewTitle').textContent=title;
+              document.getElementById('previewDesc').textContent=desc;
+              var footerEl=document.getElementById('previewFooter');
+              footerEl.textContent=footer; footerEl.style.display=footer?'block':'none';
+              var authorEl=document.getElementById('previewAuthor');
+              authorEl.textContent=author; authorEl.style.display=author?'block':'none';
+            }
+            async function sendEmbed(pingHere){
+              var channelId=document.getElementById('msgChannel').value;
+              if(!channelId){alert('Select a channel first.');return;}
+              var title=document.getElementById('msgTitle').value;
+              var desc=document.getElementById('msgDesc').value;
+              if(!title&&!desc){alert('Add a title or description.');return;}
+              var status=document.getElementById('msgStatus');
+              status.textContent='Sending…'; status.style.color='#949ba4';
+              try{
+                var r=await fetch('/dashboard/server/${guildId}/send-embed',{
+                  method:'POST',headers:{'Content-Type':'application/json'},
+                  body:JSON.stringify({
+                    channelId,title,description:desc,
+                    color:parseInt(document.getElementById('msgColor').value||'5865F2',16),
+                    footer:document.getElementById('msgFooter').value||null,
+                    image:document.getElementById('msgImage').value||null,
+                    author:document.getElementById('msgAuthor').value||null,
+                    pingHere:!!pingHere,
+                  })
+                });
+                var d=await r.json();
+                if(d.success){status.textContent='✅ Sent!'; status.style.color='#57f287';}
+                else{status.textContent='❌ '+d.error; status.style.color='#ed4245';}
+              }catch(e){status.textContent='❌ Error'; status.style.color='#ed4245';}
+            }
+          </script>
+        </div>
+
+        <!-- ── Tab: Security ── -->
+        <div id="tab-security" style="display:none; ${PANEL}">
+          <p style="font-weight:700; font-size:18px; margin:0 0 4px;">🔐 Security</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 20px;">Protect your server from raids, bots, and suspicious accounts. Use <code style="background:#111214;padding:2px 5px;border-radius:4px;">/security scan @user</code> to risk-assess any member.</p>
+
+          <!-- Status card -->
+          <div style="background:${(security||{}).lockdownActive ? '#3a1a1a' : '#111214'}; border:1px solid ${(security||{}).lockdownActive ? '#ed4245' : '#2b2d31'}; border-radius:10px; padding:14px 16px; margin-bottom:20px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+            <div>
+              <p style="font-weight:700; font-size:14px; color:${(security||{}).lockdownActive ? '#ed4245' : '#57f287'}; margin:0 0 2px;">${(security||{}).lockdownActive ? '🔒 Server is in LOCKDOWN' : '🟢 Server is secure'}</p>
+              <p style="color:#949ba4; font-size:12px; margin:0;">Use <strong style="color:#fff;">/security lockdown</strong> to toggle lockdown mode.</p>
+            </div>
+          </div>
+
+          <form method="POST" action="/dashboard/server/${guildId}/security/config">
+            <p style="font-weight:700; font-size:14px; margin:0 0 4px;">🛡️ New Account Protection</p>
+            <p style="color:#949ba4; font-size:13px; margin:0 0 10px; line-height:1.5;">Automatically handle accounts that are too new when they join.</p>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px;">
+              <div>
+                <p style="font-weight:600; font-size:13px; margin:0 0 5px; color:#fff;">Min Account Age (days)</p>
+                <input type="number" name="minAccountAgeDays" value="${security.minAccountAgeDays||0}" min="0" max="365" style="${fieldStyle} width:100%; box-sizing:border-box;" />
+              </div>
+              <div>
+                <p style="font-weight:600; font-size:13px; margin:0 0 5px; color:#fff;">Action</p>
+                <select name="newAccountAction" style="width:100%; ${fieldStyle}">
+                  <option value="none"  ${security.newAccountAction==='none'  ?'selected':''}>None (log only)</option>
+                  <option value="warn"  ${security.newAccountAction==='warn'  ?'selected':''}>Warn via DM</option>
+                  <option value="kick"  ${security.newAccountAction==='kick'  ?'selected':''}>Kick</option>
+                  <option value="ban"   ${security.newAccountAction==='ban'   ?'selected':''}>Ban</option>
+                  <option value="role"  ${security.newAccountAction==='role'  ?'selected':''}>Assign role</option>
+                </select>
+              </div>
+            </div>
+            <p style="font-weight:600; font-size:13px; margin:0 0 5px; color:#fff;">New Account Role <span style="color:#949ba4;font-weight:400;">(for action = role)</span></p>
+            <select name="newAccountRoleId" style="width:100%; ${fieldStyle} margin-bottom:16px;">
+              <option value="">-- None --</option>
+              ${assignableRoles.map(r => `<option value="${r.id}" ${r.id===security.newAccountRoleId?'selected':''}>${r.name}</option>`).join('')}
+            </select>
+
+            <hr style="border:none; border-top:1px solid #2b2d31; margin:20px 0;" />
+
+            <p style="font-weight:700; font-size:14px; margin:0 0 4px;">🚨 Raid Protection</p>
+            <p style="color:#949ba4; font-size:13px; margin:0 0 10px; line-height:1.5;">Detect and respond to mass-join attacks automatically.</p>
+            <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px; background:#111214; padding:12px 16px; border-radius:8px; border:1px solid #2b2d31;">
+              <input type="checkbox" name="raidProtection" id="raidEnabled" value="1" ${security.raidProtection?'checked':''} style="width:16px;height:16px;accent-color:#5865F2;cursor:pointer;" />
+              <label for="raidEnabled" style="color:#fff;font-size:14px;font-weight:600;cursor:pointer;">Enable raid protection</label>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:16px;">
+              <div>
+                <p style="font-weight:600; font-size:13px; margin:0 0 5px; color:#fff;">Joins Threshold</p>
+                <input type="number" name="raidThreshold" value="${security.raidThreshold||10}" min="3" max="100" style="${fieldStyle} width:100%; box-sizing:border-box;" />
+              </div>
+              <div>
+                <p style="font-weight:600; font-size:13px; margin:0 0 5px; color:#fff;">Window (seconds)</p>
+                <input type="number" name="raidWindowSeconds" value="${security.raidWindowSeconds||30}" min="5" max="300" style="${fieldStyle} width:100%; box-sizing:border-box;" />
+              </div>
+              <div>
+                <p style="font-weight:600; font-size:13px; margin:0 0 5px; color:#fff;">Action</p>
+                <select name="raidAction" style="width:100%; ${fieldStyle}">
+                  <option value="lockdown" ${security.raidAction==='lockdown'?'selected':''}>Lock server</option>
+                  <option value="kick"     ${security.raidAction==='kick'    ?'selected':''}>Kick joiners</option>
+                  <option value="ban"      ${security.raidAction==='ban'     ?'selected':''}>Ban joiners</option>
+                </select>
+              </div>
+            </div>
+
+            <p style="font-weight:600; font-size:13px; margin:0 0 5px; color:#fff;">Security Log Channel</p>
+            <select name="newAccountLogChannel" style="width:100%; ${fieldStyle} margin-bottom:20px;">
+              <option value="">-- None --</option>
+              ${channelOptions(security.newAccountLogChannel)}
+            </select>
+
+            <button type="submit" style="${buttonStyle}">Save Security Settings</button>
+          </form>
+        </div>
+
         <script>
-          var ALL_TABS=['overview','group-setup','rank-management','audit-logs','members','documents','verification','join-requests','rank-history','enterprise'];
+          var ALL_TABS=['overview','group-setup','rank-management','audit-logs','members','documents','verification','join-requests','rank-history','enterprise','messages','security'];
           function showTab(name,btn){
             ALL_TABS.forEach(function(t){
               document.getElementById('tab-'+t).style.display='none';
@@ -2179,4 +2355,62 @@ dashboardAuthRouter.get('/dashboard/server/:guildId/export-members', async (req,
   } catch (e) {
     return res.status(500).send('Export failed.');
   }
+});
+
+// ── Messages: Send Embed ──────────────────────────────────────────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/send-embed', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const { channelId, title, description, color, footer, image, author, pingHere } = req.body;
+  if (!channelId) return res.json({ success: false, error: 'No channel selected.' });
+  if (!title && !description) return res.json({ success: false, error: 'Add a title or description.' });
+
+  try {
+    const embed = { color: color || 0x5865F2, timestamp: new Date().toISOString() };
+    if (title)       embed.title       = title;
+    if (description) embed.description = description;
+    if (footer)      embed.footer      = { text: footer };
+    if (image)       embed.image       = { url: image };
+    if (author)      embed.author      = { name: author };
+
+    const body = { embeds: [embed] };
+    if (pingHere) body.content = '@here';
+
+    const r = await fetch(`https://discord.com/api/channels/${channelId}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bot ${BOT_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.text();
+      return res.json({ success: false, error: `Discord error: ${err}` });
+    }
+    return res.json({ success: true });
+  } catch (e) {
+    return res.json({ success: false, error: e.message });
+  }
+});
+
+// ── Security Config ───────────────────────────────────────────────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/security/config', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const current = await pgDb.get(`security:${guildId}`) || {};
+  const updated = {
+    ...current,
+    minAccountAgeDays:   parseInt(req.body.minAccountAgeDays)  || 0,
+    newAccountAction:    req.body.newAccountAction              || 'none',
+    newAccountRoleId:    req.body.newAccountRoleId              || null,
+    newAccountLogChannel: req.body.newAccountLogChannel         || null,
+    raidProtection:      req.body.raidProtection === '1',
+    raidThreshold:       parseInt(req.body.raidThreshold)       || 10,
+    raidWindowSeconds:   parseInt(req.body.raidWindowSeconds)   || 30,
+    raidAction:          req.body.raidAction                    || 'lockdown',
+  };
+  await pgDb.set(`security:${guildId}`, updated);
+  res.redirect(`/dashboard/server/${guildId}?success=Security+settings+saved#security`);
 });
