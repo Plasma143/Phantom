@@ -14,6 +14,7 @@ import { checkGiveaways } from './services/giveawayService.js';
 import { loadCommands, registerCommands as registerSlashCommands } from './handlers/commandLoader.js';
 import { robloxOAuthRouter } from './web/robloxOAuth.js';
 import { dashboardAuthRouter } from './web/dashboardAuth.js';
+import { stripeRouter } from './web/stripePayments.js';
 
 class PhantomBot extends Client {
   constructor() {
@@ -107,8 +108,11 @@ class PhantomBot extends Client {
 
   startWebServer() {
     const app = express();
+    // Raw body needed for Stripe webhook signature verification — must come first
+    app.use('/stripe/webhook', express.raw({ type: 'application/json' }));
     app.use(robloxOAuthRouter);
     app.use(dashboardAuthRouter);
+    app.use(stripeRouter);
     const configuredPort = Number(this.config.api?.port || process.env.PORT || 3000);
     const maxPortRetryAttempts = Number(process.env.PORT_RETRY_ATTEMPTS || 5);
     const host = process.env.WEB_HOST || '0.0.0.0';
