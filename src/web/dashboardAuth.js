@@ -565,7 +565,8 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
       <div style="max-width:700px; margin:0 auto; text-align:left;">
 
         <div style="display:flex; gap:3px; background:#111214; padding:4px; border-radius:10px; margin-bottom:20px; overflow-x:auto; flex-wrap:wrap;">
-          <button id="btn-group-setup" style="${ACTIVE}" onclick="showTab('group-setup',this)">&#9881;&#65039; Group Setup</button>
+          <button id="btn-overview" style="${ACTIVE}" onclick="showTab('overview',this)">&#128202; Overview</button>
+          <button id="btn-group-setup" style="${INACTIVE}" onclick="showTab('group-setup',this)">&#9881;&#65039; Group Setup</button>
           <button id="btn-rank-management" style="${INACTIVE}" onclick="showTab('rank-management',this)">&#128081; Rank Management</button>
           <button id="btn-audit-logs" style="${INACTIVE}" onclick="showTab('audit-logs',this)">&#128203; Audit Logs</button>
           <button id="btn-members" style="${INACTIVE}" onclick="showTab('members',this)">&#128101; Members</button>
@@ -573,7 +574,54 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           <button id="btn-verification" style="${INACTIVE}" onclick="showTab('verification',this)">&#128276; Verification</button>
         </div>
 
-        <div id="tab-group-setup" style="${PANEL}">
+        <!-- ── Tab: Overview ── -->
+        <div id="tab-overview" style="${PANEL}">
+          <!-- Server header -->
+          <div style="display:flex; align-items:center; gap:14px; margin-bottom:24px;">
+            <img src="${guildIconUrl(guild)}" width="52" height="52" style="border-radius:50%; flex-shrink:0;" />
+            <div>
+              <p style="color:#fff; font-weight:700; font-size:18px; margin:0;">${guild.name}</p>
+              <p style="color:#949ba4; font-size:13px; margin:4px 0 0;">${guildMembers.length.toLocaleString()} members &nbsp;·&nbsp; ${linkedMembers.length} linked</p>
+            </div>
+          </div>
+
+          <!-- Stat cards -->
+          <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; margin-bottom:24px;">
+            ${[
+              { label: 'Linked Members', value: String(linkedMembers.length), ok: linkedMembers.length > 0, icon: '👥' },
+              { label: 'Roblox Group', value: roblox.groupId ? 'Configured' : 'Not set', ok: !!roblox.groupId, icon: '🎮' },
+              { label: 'Rank Roles', value: String(Object.keys(roblox.rankRoles || {}).length) + ' mapped', ok: Object.keys(roblox.rankRoles || {}).length > 0, icon: '🏅' },
+              { label: 'Auto-Rank', value: autoRank.enabled ? 'Enabled' : 'Disabled', ok: autoRank.enabled, icon: '⚡' },
+              { label: 'Verification', value: verification.enabled ? 'Enabled' : 'Disabled', ok: verification.enabled, icon: '✅' },
+              { label: 'Audit Logs', value: auditLogs.discordChannelId ? 'Configured' : 'Not set', ok: !!auditLogs.discordChannelId, icon: '📋' },
+            ].map(({ label, value, ok, icon }) => `
+              <div style="background:#111214; border:1px solid ${ok ? '#2d5a3d' : '#2b2d31'}; border-radius:10px; padding:14px;">
+                <p style="color:#949ba4; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.6px; margin:0 0 6px;">${icon} ${label}</p>
+                <p style="color:${ok ? '#57f287' : '#949ba4'}; font-weight:700; font-size:15px; margin:0;">${value}</p>
+              </div>`).join('')}
+          </div>
+
+          <!-- Quick actions -->
+          <p style="color:#fff; font-weight:700; font-size:15px; margin:0 0 12px;">Quick Actions</p>
+          <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px;">
+            ${[
+              { tab: 'group-setup',     icon: '⚙️', title: 'Group Setup',     desc: roblox.groupId ? 'Change group or rank roles' : 'Connect your Roblox group' },
+              { tab: 'rank-management', icon: '👑', title: 'Rank a Member',    desc: 'Promote or demote directly' },
+              { tab: 'members',         icon: '👥', title: 'Members',          desc: `${linkedMembers.length} linked account${linkedMembers.length !== 1 ? 's' : ''}` },
+              { tab: 'verification',    icon: '🔔', title: 'Verification',     desc: 'Post the link panel to a channel' },
+              { tab: 'audit-logs',      icon: '📋', title: 'Audit Logs',       desc: 'Configure log channels' },
+              { tab: 'documents',       icon: '📄', title: 'Documents',        desc: 'Server SOPs and policies' },
+            ].map(({ tab, icon, title, desc }) => `
+              <button onclick="showTab('${tab}',document.getElementById('btn-${tab}'))"
+                style="background:#111214; border:1px solid #2b2d31; border-radius:10px; padding:14px; text-align:left; cursor:pointer; transition:border-color .15s;" 
+                onmouseover="this.style.borderColor='#5865F2'" onmouseout="this.style.borderColor='#2b2d31'">
+                <p style="color:#fff; font-weight:700; font-size:14px; margin:0 0 4px;">${icon} ${title}</p>
+                <p style="color:#949ba4; font-size:12px; margin:0;">${desc}</p>
+              </button>`).join('')}
+          </div>
+        </div>
+
+        <div id="tab-group-setup" style="display:none; ${PANEL}">
           <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Roblox Group</p>
           <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">${groupLine}</p>
           <form method="POST" action="/dashboard/server/${guildId}/group" style="display:flex; gap:8px; margin-bottom:24px;">
