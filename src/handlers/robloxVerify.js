@@ -32,7 +32,8 @@ import {
 } from '../utils/roblox.js';
 import { saveRobloxLink, getRobloxLink } from '../utils/robloxDb.js';
 import { botConfig } from '../config/bot.js';
-import { db, getConfigValue } from '../utils/database.js';
+import { db } from '../utils/database.js';
+import { getConfigValue } from '../services/guildConfig.js';
 
 export const ROBLOX_LINK_BUTTON_ID = 'roblox_link_start';
 export const ROBLOX_CONFIRM_BUTTON_ID = 'roblox_link_confirm';
