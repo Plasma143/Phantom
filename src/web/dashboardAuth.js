@@ -602,6 +602,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           <button id="btn-members" style="${INACTIVE}" onclick="showTab('members',this)">&#128101; Members${!isPremium ? ' 🔒' : ''}</button>
           <button id="btn-documents" style="${INACTIVE}" onclick="showTab('documents',this)">&#128196; Documents${!isPremium ? ' 🔒' : ''}</button>
           <button id="btn-verification" style="${INACTIVE}" onclick="showTab('verification',this)">&#128276; Verification</button>
+          <button id="btn-join-requests" style="${INACTIVE}" onclick="showTab('join-requests',this)">&#x1F4E8; Join Requests${!isPremium ? ' 🔒' : ''}</button>
         </div>
 
         <!-- ── Tab: Overview ── -->
@@ -796,10 +797,14 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
             <button type="submit" style="${buttonStyle}">Save Auto-Rank Settings</button>
           </form>
-
+        <div id="tab-join-requests" style="display:none; ${PANEL}">
+          <p style="font-weight:700; font-size:18px; margin:0 0 6px;">&#x1F4E8; Group Join Requests</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 24px; line-height:1.6;">
+            People waiting to join your Roblox group. When someone verifies their Roblox account with Phantom, they are <strong style="color:#57f287;">automatically accepted</strong> into the group. Manually manage any remaining pending requests below.
+          </p>
           <hr style="border:none; border-top:1px solid #2b2d31; margin:28px 0;" />
 
-          <p style="font-weight:700; margin:0 0 4px; font-size:15px;">&#x1F4E8; Group Join Requests</p>
+          
           <p style="color:#949ba4; font-size:13px; margin:0 0 16px; line-height:1.6;">
             People waiting to join your Roblox group. When someone verifies their Roblox account with Phantom, they are <strong style="color:#57f287;">automatically accepted</strong> into the group. You can also manually manage pending requests here.
           </p>
@@ -1097,7 +1102,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
         </div>
 
         <script>
-          var ALL_TABS=['group-setup','rank-management','audit-logs','members','documents','verification'];
+          var ALL_TABS=['group-setup','rank-management','audit-logs','members','documents','verification','join-requests'];
           function showTab(name,btn){
             ALL_TABS.forEach(function(t){
               document.getElementById('tab-'+t).style.display='none';
