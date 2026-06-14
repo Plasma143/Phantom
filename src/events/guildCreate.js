@@ -25,9 +25,9 @@ export default {
         return;
       }
 
-      // Register guild-specific commands immediately — no propagation delay
-      await guild.commands.set(commands);
-      logger.info(`[guildCreate] Registered ${commands.length} commands in ${guild.name}`);
+      // Clear any existing guild-specific commands to prevent duplicates with global
+      await guild.commands.set([]);
+      logger.info(`[guildCreate] Cleared guild-specific commands in ${guild.name} — global commands will apply`);
 
     } catch (err) {
       logger.error(`[guildCreate] Failed to register commands in ${guild?.name}:`, err.message);
