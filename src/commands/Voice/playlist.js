@@ -7,6 +7,20 @@ import { useMainPlayer } from 'discord-player';
 import { getFromDb, setInDb, deleteFromDb } from '../../utils/database.js';
 import { getSubscription, getTier, isOwner } from '../../web/stripePayments.js';
 
+// Resolve YouTube URLs to titles so SoundCloud extractor can handle them
+async function resolveQuery(query) {
+  const ytMatch = query.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  if (!ytMatch) return query;
+  try {
+    const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(query)}&format=json`);
+    if (res.ok) {
+      const data = await res.json();
+      return data.title || query;
+    }
+  } catch {}
+  return query;
+}
+
 const MAX_PLAYLISTS_PREMIUM    = 5;
 const MAX_PLAYLISTS_ENTERPRISE = 10;
 const MAX_SONGS_PER_PLAYLIST   = 50;
@@ -209,8 +223,9 @@ export default {
       // Use player.play() per song — handles both text queries and URLs reliably
       for (const song of songs) {
         try {
+          const resolvedSong = await resolveQuery(song);
           await Promise.race([
-            player.play(voiceChannel, song, {
+            player.play(voiceChannel, resolvedSong, {
               requestedBy: interaction.user,
               nodeOptions: {
                 metadata: { channel: interaction.channel },
