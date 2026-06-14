@@ -102,24 +102,17 @@ class PhantomBot extends Client {
         if (!channel?.send) return;
 
         const timestamp = queue.node.getTimestamp();
-        const elapsed  = timestamp?.current?.label  ?? '0:00';
-        const total    = timestamp?.total?.label    ?? track.duration;
-        const pct      = timestamp?.progress        ?? 0;
-
-        // Build progress bar: 20 segments
-        const filled = Math.round(pct / 5);
-        const bar    = '▬'.repeat(filled) + '🔘' + '▬'.repeat(Math.max(0, 20 - filled));
+        const total = timestamp?.total?.label ?? track.duration;
 
         const embed = new EmbedBuilder()
           .setColor(0x7c3aed)
           .setAuthor({ name: '🎵 Now Playing' })
           .setTitle(track.title)
           .setURL(track.url)
-          .setDescription(`${bar}\n\`${elapsed} / ${total}\``)
           .addFields(
-            { name: 'Author',        value: track.author  || 'Unknown', inline: true },
-            { name: 'Requested by',  value: track.requestedBy ? `<@${track.requestedBy.id}>` : 'Unknown', inline: true },
-            { name: 'Duration',      value: total,                                         inline: true },
+            { name: 'Duration',     value: total,                                                               inline: true },
+            { name: 'Author',       value: track.author || 'Unknown',                                          inline: true },
+            { name: 'Requested by', value: track.requestedBy ? `<@${track.requestedBy.id}>` : 'Unknown',      inline: true },
           )
           .setThumbnail(track.thumbnail ?? null);
 
