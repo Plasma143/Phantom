@@ -23,6 +23,7 @@ import { getConfigValue, updateGuildConfig } from '../services/guildConfig.js';
 import { db } from '../utils/database.js';
 import { pgDb } from '../utils/postgresDatabase.js';
 import { getRobloxGroupInfo, getRobloxUserByUsername, getGroupRoles, getGroupMembership, updateGroupMemberRank } from '../utils/roblox.js';
+import { getSubscription, getTier } from './stripePayments.js';
 
 const PUBLIC_URL = process.env.PUBLIC_URL || 'https://phantom1.up.railway.app';
 const REDIRECT_URI = `${PUBLIC_URL}/dashboard/auth/callback`;
@@ -476,7 +477,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
     const { guild, user } = access;
 
-    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification, autoRank] = await Promise.all([
+    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification, autoRank, subscription] = await Promise.all([
       fetch(`https://discord.com/api/guilds/${guildId}/roles`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       fetch(`https://discord.com/api/guilds/${guildId}/channels`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       fetch(`https://discord.com/api/guilds/${guildId}/members?limit=1000`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
@@ -484,6 +485,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
       getConfigValue({ db }, guildId, 'auditLogs', {}),
       getConfigValue({ db }, guildId, 'verification', {}),
       getConfigValue({ db }, guildId, 'autoRank', {}),
+      getSubscription(guildId),
     ]);
 
     const allRoles = rolesRes.ok ? await rolesRes.json() : [];
@@ -542,6 +544,23 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           </li>`).join('')
       : '<li style="color:#888;"><em>None set</em></li>';
 
+    const tier = getTier(subscription);
+    const isPremium = tier === 'premium' || tier === 'enterprise';
+    const isEnterprise = tier === 'enterprise';
+
+    // Upgrade banner for free servers
+    const upgradeBanner = !isPremium ? `
+      <div style="background:linear-gradient(135deg,#2d1b69,#1a0840); border:1px solid #5b21b6; border-radius:10px; padding:14px 18px; margin-bottom:20px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <p style="color:#c084fc; font-weight:700; font-size:14px; margin:0 0 3px;">⚡ Unlock Phantom Premium</p>
+          <p style="color:#a78bfa; font-size:12px; margin:0;">Auto-Rank, live member ranks, audit logs, documents and more — from $7/month.</p>
+        </div>
+        <div style="display:flex; gap:8px; flex-shrink:0;">
+          <a href="/upgrade/${guildId}?plan=premium" style="display:inline-block; padding:8px 14px; background:#7c3aed; color:#fff; border-radius:8px; text-decoration:none; font-size:13px; font-weight:600;">Premium $7/mo</a>
+          <a href="/upgrade/${guildId}?plan=enterprise" style="display:inline-block; padding:8px 14px; background:#4c1d95; color:#c084fc; border-radius:8px; text-decoration:none; font-size:13px; font-weight:600;">Enterprise $15/mo</a>
+        </div>
+      </div>` : '';
+
     let banner = '';
     if (req.query.success) banner = `<div style="background:#1a3a2a; color:#57f287; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #2d5a3d; font-size:14px;">&#x2705; ${req.query.success}</div>`;
     else if (req.query.error) banner = `<div style="background:#3a1a1a; color:#ed4245; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #5a2d2d; font-size:14px;">&#x274C; ${req.query.error}</div>`;
@@ -560,6 +579,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
       <img src="${guildIconUrl(guild)}" width="56" style="border-radius:50%; margin-bottom:10px;" />
       <h2 style="margin:0 0 4px; font-size:22px;">${guild.name}</h2>
       <p style="color:#949ba4; font-size:14px; margin:0 0 24px;">Server Settings</p>
+      ${upgradeBanner}
       ${banner}
 
       <div style="max-width:700px; margin:0 auto; text-align:left;">
@@ -567,10 +587,10 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
         <div style="display:flex; gap:3px; background:#111214; padding:4px; border-radius:10px; margin-bottom:20px; overflow-x:auto; flex-wrap:wrap;">
           <button id="btn-overview" style="${ACTIVE}" onclick="showTab('overview',this)">&#128202; Overview</button>
           <button id="btn-group-setup" style="${INACTIVE}" onclick="showTab('group-setup',this)">&#9881;&#65039; Group Setup</button>
-          <button id="btn-rank-management" style="${INACTIVE}" onclick="showTab('rank-management',this)">&#128081; Rank Management</button>
-          <button id="btn-audit-logs" style="${INACTIVE}" onclick="showTab('audit-logs',this)">&#128203; Audit Logs</button>
-          <button id="btn-members" style="${INACTIVE}" onclick="showTab('members',this)">&#128101; Members</button>
-          <button id="btn-documents" style="${INACTIVE}" onclick="showTab('documents',this)">&#128196; Documents</button>
+          <button id="btn-rank-management" style="${INACTIVE}" onclick="showTab('rank-management',this)">&#128081; Rank Management${!isPremium ? ' 🔒' : ''}</button>
+          <button id="btn-audit-logs" style="${INACTIVE}" onclick="showTab('audit-logs',this)">&#128203; Audit Logs${!isPremium ? ' 🔒' : ''}</button>
+          <button id="btn-members" style="${INACTIVE}" onclick="showTab('members',this)">&#128101; Members${!isPremium ? ' 🔒' : ''}</button>
+          <button id="btn-documents" style="${INACTIVE}" onclick="showTab('documents',this)">&#128196; Documents${!isPremium ? ' 🔒' : ''}</button>
           <button id="btn-verification" style="${INACTIVE}" onclick="showTab('verification',this)">&#128276; Verification</button>
         </div>
 
@@ -663,6 +683,14 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
         </div>
 
         <div id="tab-rank-management" style="display:none; ${PANEL}">
+          ${!isPremium ? `
+          <div style="background:#1a0840; border:1px solid #5b21b6; border-radius:10px; padding:24px; margin-bottom:20px; text-align:center;">
+            <p style="color:#c084fc; font-size:28px; margin:0 0 8px;">🔒</p>
+            <p style="color:#fff; font-weight:700; font-size:16px; margin:0 0 6px;">Premium Feature</p>
+            <p style="color:#a78bfa; font-size:13px; margin:0 0 16px;">Upgrade to unlock Rank Management and all premium features.</p>
+            <a href="/upgrade/${guildId}?plan=premium" style="display:inline-block; padding:10px 24px; background:#7c3aed; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; font-weight:600; margin-right:8px;">Premium — $7/mo</a>
+            <a href="/upgrade/${guildId}?plan=enterprise" style="display:inline-block; padding:10px 24px; background:#4c1d95; color:#c084fc; border-radius:8px; text-decoration:none; font-size:14px; font-weight:600;">Enterprise — $15/mo</a>
+          </div>` : ''}
           <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Open Cloud API Key</p>
           <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Required to change Roblox group ranks. Create one at <a href="https://create.roblox.com/dashboard/credentials" target="_blank" style="color:#5865F2;">create.roblox.com</a> with <strong>group:write</strong> permission.</p>
           <form method="POST" action="/dashboard/server/${guildId}/open-cloud-key" style="display:flex; gap:8px; margin-bottom:28px;">
@@ -761,6 +789,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
         </div>
 
         <div id="tab-audit-logs" style="display:none; ${PANEL}">
+          ${!isPremium ? `<div style="background:#1a0840; border:1px solid #5b21b6; border-radius:10px; padding:24px; margin-bottom:20px; text-align:center;"><p style="color:#c084fc; font-size:28px; margin:0 0 8px;">🔒</p><p style="color:#fff; font-weight:700; font-size:16px; margin:0 0 6px;">Premium Feature</p><p style="color:#a78bfa; font-size:13px; margin:0 0 16px;">Upgrade to enable audit logging.</p><a href="/upgrade/${guildId}?plan=premium" style="display:inline-block; padding:10px 24px; background:#7c3aed; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; font-weight:600;">Upgrade — $7/mo</a></div>` : ''}
           <div style="background:#111214; border:1px solid #2b2d31; border-radius:10px; padding:16px; margin-bottom:24px; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;">
             <div>
               <p style="color:#fff; font-weight:700; margin:0 0 4px; font-size:14px;">&#x1F916; Auto-Create Log Channels</p>
@@ -783,6 +812,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
         </div>
 
         <div id="tab-members" style="display:none; ${PANEL}">
+          ${!isPremium ? `<div style="background:#1a0840; border:1px solid #5b21b6; border-radius:10px; padding:24px; margin-bottom:20px; text-align:center;"><p style="color:#c084fc; font-size:28px; margin:0 0 8px;">🔒</p><p style="color:#fff; font-weight:700; font-size:16px; margin:0 0 6px;">Premium Feature</p><p style="color:#a78bfa; font-size:13px; margin:0 0 16px;">Upgrade to see linked members with live Roblox ranks.</p><a href="/upgrade/${guildId}?plan=premium" style="display:inline-block; padding:10px 24px; background:#7c3aed; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; font-weight:600;">Upgrade — $7/mo</a></div>` : ''}
           <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Linked Members</p>
           <p style="color:#949ba4; font-size:13px; margin:0 0 20px;">Members who have linked their Roblox account. Group ranks load automatically${roblox.openCloudKey ? '' : ' once an Open Cloud key is saved in Rank Management'}.</p>
           ${linkedMembers.length ? `
@@ -860,6 +890,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
         </div>
 
         <div id="tab-documents" style="display:none; ${PANEL}">
+          ${!isPremium ? `<div style="background:#1a0840; border:1px solid #5b21b6; border-radius:10px; padding:24px; margin-bottom:20px; text-align:center;"><p style="color:#c084fc; font-size:28px; margin:0 0 8px;">🔒</p><p style="color:#fff; font-weight:700; font-size:16px; margin:0 0 6px;">Premium Feature</p><p style="color:#a78bfa; font-size:13px; margin:0 0 16px;">Upgrade to create and share server documents.</p><a href="/upgrade/${guildId}?plan=premium" style="display:inline-block; padding:10px 24px; background:#7c3aed; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; font-weight:600;">Upgrade — $7/mo</a></div>` : ''}
           <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Server Documents</p>
           <p style="color:#949ba4; font-size:13px; margin:0 0 20px;">Private documents visible only to this server's admins. Each gets a shareable read-only link.</p>
           <form method="POST" action="/dashboard/server/${guildId}/documents" style="margin-bottom:24px; background:#111214; border-radius:10px; padding:16px; border:1px solid #2b2d31;">
