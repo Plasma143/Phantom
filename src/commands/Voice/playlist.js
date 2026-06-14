@@ -211,9 +211,8 @@ export default {
         selfDeaf: true,
         volume: 80,
         leaveOnEmpty: true,
-        leaveOnEmptyCooldown: 30000,
-        leaveOnEnd: true,
-        leaveOnEndCooldown: 30000,
+        leaveOnEmptyCooldown: 300000, // 5 minutes when VC is empty
+        leaveOnEnd: false,            // stay in VC after queue ends
       });
 
       // Connect to voice if not already connected
@@ -231,8 +230,7 @@ export default {
       for (const song of songs) {
         try {
           const result = await Promise.race([
-            player.search(song, { requestedBy: interaction.user }),
-            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
+            player.search(song, { requestedBy: interaction.user }),            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
           ]);
           if (result?.hasTracks()) {
             queue.addTrack(result.tracks[0]);
