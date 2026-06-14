@@ -53,8 +53,10 @@ async function handleAutoRank(message, client) {
 
     if (!content.trim()) return;
 
-    // Parse with Claude
-    const parsed = await parsePromotionLog(content);
+    // Parse with free pattern matching — no API needed
+    const parsed = parsePromotionLog(content, autoRank.customFormat || null);
+
+    // Not a promotion log — stay silent (don't react to every message)
     if (parsed.error || !parsed.username || !parsed.newRank) {
       logger.debug(`[autoRank] Not a promotion log in ${message.guild.name}: ${parsed.error || 'missing fields'}`);
       return;
