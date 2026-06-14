@@ -28,9 +28,11 @@ import {
   getRobloxRankInGroup,
   generateVerificationCode,
   bioContainsCode,
+  acceptGroupJoinRequest,
 } from '../utils/roblox.js';
 import { saveRobloxLink, getRobloxLink } from '../utils/robloxDb.js';
 import { botConfig } from '../config/bot.js';
+import { db, getConfigValue } from '../utils/database.js';
 
 export const ROBLOX_LINK_BUTTON_ID = 'roblox_link_start';
 export const ROBLOX_CONFIRM_BUTTON_ID = 'roblox_link_confirm';
@@ -207,9 +209,23 @@ export async function handleRobloxConfirmButton(interaction, client) {
     pendingLinks.delete(interaction.user.id);
 
     await syncRobloxRoles(interaction.member, pending.robloxId);
-    await interaction.member.setNickname(pending.robloxUsername).catch(() => {
-      // Bot may not be able to rename this member (e.g. server owner) — safe to ignore.
-    });
+    await interaction.member.setNickname(pending.robloxUsername).catch(() => {});
+
+    // Auto-accept pending group join request if the server has a group configured
+    try {
+      const robloxConfig = await getConfigValue({ db }, interaction.guildId, 'roblox', {});
+      if (robloxConfig.groupId && robloxConfig.openCloudKey) {
+        await acceptGroupJoinRequest(robloxConfig.groupId, pending.robloxId, robloxConfig.openCloudKey);
+        logger.info('Auto-accepted group join request on verify', {
+          robloxId: pending.robloxId,
+          groupId: robloxConfig.groupId,
+          guildId: interaction.guildId,
+        });
+      }
+    } catch (e) {
+      // Silent fail — user may not have a pending request, which is normal
+      logger.debug('Auto-accept join request skipped:', e.message);
+    }
 
     logger.info('User linked Roblox account', {
       userId: interaction.user.id,
