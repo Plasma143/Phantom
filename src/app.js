@@ -93,7 +93,13 @@ class PhantomBot extends Client {
 
       startupLog('Initialising music player...');
       const player = new Player(this);
-      await player.extractors.loadMulti(DefaultExtractors);
+      await player.extractors.loadMulti(DefaultExtractors, {
+        // Spotify support — enables full track playback via YouTube bridging
+        SpotifyExtractor: {
+          clientId:     process.env.SPOTIFY_CLIENT_ID     || '',
+          clientSecret: process.env.SPOTIFY_CLIENT_SECRET || '',
+        },
+      });
       this.player = player;
 
       // Auto-post a rich Now Playing card whenever a track starts
