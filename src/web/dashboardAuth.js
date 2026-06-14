@@ -1810,6 +1810,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId/auto-bind-roles', async (req
   const { guildId } = req.params;
   const access = await requireGuildAccess(req, res, guildId);
   if (!access) return;
+  if (!await checkTier(access, guildId)) return res.redirect(`/dashboard/server/${guildId}?error=Premium+required+for+auto-bind#group-setup`);
 
   try {
     const roblox = await getConfigValue({ db }, guildId, 'roblox', {});
@@ -2002,12 +2003,23 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/join-requests/decline', asy
   }
 });
 
+
+// ── Tier enforcement helper ───────────────────────────────────────────────────
+async function checkTier(access, guildId, minTier = 'premium') {
+  const sub  = await getSubscription(guildId);
+  const tier = isOwner(access.user.id) ? 'enterprise' : getTier(sub);
+  if (minTier === 'enterprise' && tier !== 'enterprise') return null;
+  if (minTier === 'premium'    && tier === 'free')       return null;
+  return tier;
+}
+
 // ---- Rank management handlers ----
 
 dashboardAuthRouter.post('/dashboard/server/:guildId/auto-rank', async (req, res) => {
   const { guildId } = req.params;
   const access = await requireGuildAccess(req, res, guildId);
   if (!access) return;
+  if (!await checkTier(access, guildId)) return res.redirect(`/dashboard/server/${guildId}?error=Premium+required+for+Auto-Rank#rank-management`);
 
   const enabled         = req.body.enabled === '1';
   const watchChannelId  = req.body.watchChannelId  || null;
@@ -2061,6 +2073,7 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/documents', async (req, res
   const { guildId } = req.params;
   const access = await requireGuildAccess(req, res, guildId);
   if (!access) return;
+  if (!await checkTier(access, guildId)) return res.redirect(`/dashboard/server/${guildId}?error=Premium+required+for+Documents#documents`);
   const { title, content } = req.body;
   if (!title || !content) return res.redirect(`/dashboard/server/${guildId}?error=Title+and+content+required#documents`);
   const docId = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
@@ -2144,6 +2157,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId/create-log-channels', async 
   const { guildId } = req.params;
   const access = await requireGuildAccess(req, res, guildId);
   if (!access) return;
+  if (!await checkTier(access, guildId)) return res.redirect(`/dashboard/server/${guildId}?error=Premium+required+for+Audit+Logs#audit-logs`);
 
   try {
     const base = 'https://discord.com/api';
@@ -2263,6 +2277,7 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/rank-change', async (req, r
   const { guildId } = req.params;
   const access = await requireGuildAccess(req, res, guildId);
   if (!access) return res.json({ success: false, error: 'Not authorized.' });
+  if (!await checkTier(access, guildId)) return res.json({ success: false, error: 'Premium required to change ranks.' });
 
   const { robloxId, targetRank } = req.body;
 
@@ -2326,6 +2341,7 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/member-ranks', async (req, 
   const { guildId } = req.params;
   const access = await requireGuildAccess(req, res, guildId);
   if (!access) return res.json({ ranks: {} });
+  if (!await checkTier(access, guildId)) return res.json({ ranks: {} });
 
   const { robloxIds } = req.body;
   if (!Array.isArray(robloxIds) || !robloxIds.length) return res.json({ ranks: {} });
@@ -2462,6 +2478,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId/export-members', async (req,
   const { guildId } = req.params;
   const access = await requireGuildAccess(req, res, guildId);
   if (!access) return;
+  if (!await checkTier(access, guildId, 'enterprise')) return res.status(403).send('Enterprise required.');
 
   try {
     const [membersRes, roblox] = await Promise.all([
