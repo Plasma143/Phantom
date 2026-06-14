@@ -4,6 +4,7 @@ import { getWelcomeConfig, getUserApplications, deleteApplication } from '../uti
 import { formatWelcomeMessage } from '../utils/welcome.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { getServerCounters, updateCounter } from '../services/serverstatsService.js';
+import { postAuditLog, timeAgo } from '../services/phantomAudit.js';
 import { getGuildBirthdays, deleteBirthday } from '../utils/database.js';
 import { deleteUserLevelData } from '../services/leveling.js';
 import { logger } from '../utils/logger.js';
@@ -109,6 +110,19 @@ export default {
         } catch (error) {
             logger.debug('Error logging member leave:', error);
         }
+
+        // ── Phantom audit log → #discord-logs ──
+        await postAuditLog(member.client, guild, 'discord', {
+          color: 0xED4245,
+          title: '🚪 Member Left',
+          thumbnail: user.displayAvatarURL({ size: 64 }),
+          fields: [
+            { name: 'User', value: `${user.tag}`, inline: true },
+            { name: 'Time in Server', value: member.joinedTimestamp ? timeAgo(Date.now() - member.joinedTimestamp) : 'Unknown', inline: true },
+            { name: 'Member Count', value: String(guild.memberCount), inline: true },
+          ],
+          footer: `ID: ${user.id}`,
+        });
         
         
         try {
@@ -163,6 +177,3 @@ export default {
     }
   }
 };
-
-
-
