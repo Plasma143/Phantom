@@ -5,7 +5,7 @@
 //   /dashboard/login         -> redirects to Discord's OAuth consent screen
 //   /dashboard/auth/callback -> exchanges the code, fetches the user, sets a cookie
 //   /dashboard/logout         -> clears the session cookie
-//   /dashboard                -> shows the servers you can manage with Phantom
+//   /dashboard                -> shows the servers you can manage with R2-D2
 //   /dashboard/server/:id     -> view + edit that server's Roblox setup
 //   /dashboard/commands       -> public list of all slash commands
 //
@@ -21,7 +21,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { logger } from '../utils/logger.js';
 import { getConfigValue, updateGuildConfig } from '../services/guildConfig.js';
 import { db } from '../utils/database.js';
-import { getRobloxGroupInfo } from '../utils/roblox.js';
+import { getRobloxGroupInfo, getRobloxUserByUsername, getGroupRoles, getGroupMembership, updateGroupMemberRank } from '../utils/roblox.js';
 
 const PUBLIC_URL = process.env.PUBLIC_URL || 'https://r2-d2-production.up.railway.app';
 const REDIRECT_URI = `${PUBLIC_URL}/dashboard/auth/callback`;
@@ -40,6 +40,7 @@ export const dashboardAuthRouter = Router();
 // Parse form submissions (built into Express — no new dependency).
 // Scoped to this router only, so it doesn't affect anything else.
 dashboardAuthRouter.use(express.urlencoded({ extended: true }));
+dashboardAuthRouter.use(express.json());
 
 // Quietly avoid a 404 in the browser console for favicon requests.
 dashboardAuthRouter.get('/favicon.ico', (req, res) => res.status(204).end());
@@ -170,7 +171,7 @@ function renderPage(bodyHtml, user = null) {
     <html>
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Phantom Dashboard</title>
+        <title>R2-D2 Dashboard</title>
         <style>
           * { box-sizing: border-box; }
           body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
@@ -186,7 +187,7 @@ function renderPage(bodyHtml, user = null) {
       <body style="margin:0; background:#1e1f22; color:#fff; font-size:16px;">
         <div style="background:#2b2d31; padding:14px 24px; display:flex; flex-wrap:wrap; gap:20px; justify-content:space-between; align-items:center; border-bottom:1px solid #1e1f22;">
           <div style="display:flex; align-items:center; gap:20px;">
-            <a href="/dashboard" style="color:#fff; text-decoration:none; font-weight:bold; font-size:18px;">Phantom Dashboard</a>
+            <a href="/dashboard" style="color:#fff; text-decoration:none; font-weight:bold; font-size:18px;">R2-D2 Dashboard</a>
             <a href="/dashboard/commands" style="color:#aaa; text-decoration:none; font-size:14px;">Commands</a>
           </div>
           ${navUser}
@@ -345,7 +346,7 @@ dashboardAuthRouter.get('/dashboard/logout', (req, res) => {
   res.redirect('/dashboard');
 });
 
-// Public: list every slash command Phantom offers.
+// Public: list every slash command R2-D2 offers.
 dashboardAuthRouter.get('/dashboard/commands', async (req, res) => {
   // Best-effort login lookup, just to keep the nav consistent. Not required.
   let user = null;
@@ -370,7 +371,7 @@ dashboardAuthRouter.get('/dashboard/commands', async (req, res) => {
 
     const body = `
       <h2 style="margin-top:0;">Commands</h2>
-      <p style="color:#aaa; margin-bottom:24px;">Here's everything Phantom can do. Commands marked <span style="background:#444; color:#aaa; font-size:11px; padding:2px 6px; border-radius:4px;">Admin</span> require server management permissions.</p>
+      <p style="color:#aaa; margin-bottom:24px;">Here's everything R2-D2 can do. Commands marked <span style="background:#444; color:#aaa; font-size:11px; padding:2px 6px; border-radius:4px;">Admin</span> require server management permissions.</p>
 
       <div style="max-width:640px; margin:0 auto 24px; text-align:left; background:#2b2d31; padding:16px; border-radius:8px;">
         <p style="margin:0;"><strong>Setting up Roblox verification?</strong> Server admins can configure this from the <a href="/dashboard" style="color:#5865F2;">dashboard</a>.</p>
@@ -386,7 +387,7 @@ dashboardAuthRouter.get('/dashboard/commands', async (req, res) => {
   }
 });
 
-// Step 3: show the servers this user can manage with Phantom.
+// Step 3: show the servers this user can manage with R2-D2.
 dashboardAuthRouter.get('/dashboard', async (req, res) => {
   const token = getCookie(req, 'dashboard_token');
 
@@ -421,7 +422,7 @@ dashboardAuthRouter.get('/dashboard', async (req, res) => {
 
     let body;
     if (manageable.length === 0) {
-      body = `<p style="margin-top:12px; color:#aaa;">No servers found where you have <strong>Manage Server</strong> permission and Phantom is present.</p>`;
+      body = `<p style="margin-top:12px; color:#aaa;">No servers found where you have <strong>Manage Server</strong> permission and R2-D2 is present.</p>`;
     } else {
       const items = manageable
         .map(
@@ -549,6 +550,96 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           <button type="submit" style="${buttonStyle}">Add</button>
         </form>
 
+        <hr style="border:none; border-top:1px solid #3a3b3e; margin:28px 0;" />
+
+        <h3 style="color:#fff; margin:0 0 6px;">Rank Management</h3>
+        <p style="color:#aaa; font-size:14px; margin:0 0 12px;">
+          Enter your Roblox group's Open Cloud API key to enable rank changes from this dashboard.
+          Create one at <a href="https://create.roblox.com/credentials" target="_blank" style="color:#5865F2;">create.roblox.com/credentials</a>
+          with <strong>Manage group membership</strong> permission scoped to your group.
+        </p>
+        <form method="POST" action="/dashboard/server/${guildId}/open-cloud-key" style="display:flex; gap:8px; margin-bottom:20px;">
+          <input type="password" name="openCloudKey" placeholder="${roblox.openCloudKey ? 'Key saved — paste a new one to replace' : 'Paste Open Cloud API key'}" style="flex:1; ${fieldStyle}" />
+          <button type="submit" style="${buttonStyle}">Save</button>
+        </form>
+
+        ${roblox.groupId && roblox.openCloudKey ? `
+        <h4 style="color:#fff; margin:0 0 6px;">Rank a Member</h4>
+        <p style="color:#aaa; font-size:14px; margin:0 0 12px;">Look up a Roblox user by username and change their rank in the group.</p>
+        <div style="display:flex; gap:8px; margin-bottom:16px;">
+          <input type="text" id="rankUsername" placeholder="Roblox username" style="flex:1; ${fieldStyle}" onkeydown="if(event.key==='Enter') lookupMember()" />
+          <button onclick="lookupMember()" style="${buttonStyle}">Look Up</button>
+        </div>
+        <div id="rankResult" style="display:none; background:#2b2d31; border-radius:8px; padding:16px; margin-bottom:8px;">
+          <p id="rankResultName" style="color:#fff; margin:0 0 4px; font-weight:bold;"></p>
+          <p id="rankResultCurrent" style="color:#aaa; margin:0 0 14px; font-size:14px;"></p>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <select id="rankSelect" style="flex:1; ${fieldStyle}"></select>
+            <button onclick="changeRank()" style="${buttonStyle}">Change Rank</button>
+          </div>
+          <p id="rankMsg" style="margin:10px 0 0; font-size:14px;"></p>
+        </div>
+        <script>
+          var currentRobloxId = null;
+          async function lookupMember() {
+            var username = document.getElementById('rankUsername').value.trim();
+            if (!username) return;
+            var resultDiv = document.getElementById('rankResult');
+            var msg = document.getElementById('rankMsg');
+            msg.textContent = '';
+            resultDiv.style.display = 'none';
+            try {
+              var res = await fetch('/dashboard/server/${guildId}/rank-lookup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: username })
+              });
+              var data = await res.json();
+              if (!data.success) { alert(data.error || 'Could not find that user.'); return; }
+              currentRobloxId = data.robloxId;
+              document.getElementById('rankResultName').textContent = data.robloxUsername;
+              document.getElementById('rankResultCurrent').textContent = 'Current rank: ' + data.currentRankName + ' (' + data.currentRank + ')';
+              var select = document.getElementById('rankSelect');
+              select.innerHTML = data.roles
+                .filter(function(r) { return r.rank !== 255; })
+                .map(function(r) { return '<option value="' + r.rank + '"' + (r.rank === data.currentRank ? ' selected' : '') + '>' + r.displayName + ' (' + r.rank + ')</option>'; })
+                .join('');
+              resultDiv.style.display = 'block';
+            } catch(e) { alert('Error looking up user.'); }
+          }
+          async function changeRank() {
+            var targetRank = Number(document.getElementById('rankSelect').value);
+            var msg = document.getElementById('rankMsg');
+            msg.style.color = '#aaa';
+            msg.textContent = 'Changing rank...';
+            try {
+              var res = await fetch('/dashboard/server/${guildId}/rank-change', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ robloxId: currentRobloxId, targetRank: targetRank })
+              });
+              var data = await res.json();
+              if (data.success) {
+                msg.style.color = '#57f287';
+                msg.textContent = '✅ Rank changed successfully!';
+                var sel = document.getElementById('rankSelect');
+                document.getElementById('rankResultCurrent').textContent = 'Current rank: ' + sel.options[sel.selectedIndex].text;
+              } else {
+                msg.style.color = '#ed4245';
+                msg.textContent = '❌ ' + (data.error || 'Something went wrong.');
+              }
+            } catch(e) {
+              msg.style.color = '#ed4245';
+              msg.textContent = '❌ Error contacting server.';
+            }
+          }
+        </script>
+        ` : roblox.groupId ? `
+        <p style="color:#aaa; font-size:14px;">Save an Open Cloud API key above to enable rank management.</p>
+        ` : `
+        <p style="color:#aaa; font-size:14px;">Set a Roblox Group ID above before configuring rank management.</p>
+        `}
+
       </div>
     `;
 
@@ -630,4 +721,104 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/rank-roles/remove', async (
   await updateGuildConfig({ db }, guildId, { roblox: { ...current, rankRoles } });
 
   res.redirect(`/dashboard/server/${guildId}?success=Rank+role+removed`);
+});
+
+// ---- Rank management handlers ----
+
+dashboardAuthRouter.post('/dashboard/server/:guildId/open-cloud-key', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const openCloudKey = (req.body.openCloudKey || '').trim();
+  if (!openCloudKey) {
+    return res.redirect(`/dashboard/server/${guildId}?error=API+key+cannot+be+empty`);
+  }
+
+  const current = await getConfigValue({ db }, guildId, 'roblox', {});
+  await updateGuildConfig({ db }, guildId, { roblox: { ...current, openCloudKey } });
+
+  res.redirect(`/dashboard/server/${guildId}?success=Open+Cloud+key+saved`);
+});
+
+dashboardAuthRouter.post('/dashboard/server/:guildId/rank-lookup', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return res.json({ success: false, error: 'Not authorized.' });
+
+  const { username } = req.body;
+  if (!username) return res.json({ success: false, error: 'Username required.' });
+
+  try {
+    const roblox = await getConfigValue({ db }, guildId, 'roblox', {});
+    if (!roblox.groupId || !roblox.openCloudKey) {
+      return res.json({ success: false, error: 'Group ID and Open Cloud key must be configured first.' });
+    }
+
+    const robloxUser = await getRobloxUserByUsername(username);
+    if (!robloxUser) {
+      return res.json({ success: false, error: `No Roblox user found named "${username}".` });
+    }
+
+    const [membership, roles] = await Promise.all([
+      getGroupMembership(roblox.groupId, robloxUser.id, roblox.openCloudKey),
+      getGroupRoles(roblox.groupId, roblox.openCloudKey),
+    ]);
+
+    if (!membership) {
+      return res.json({ success: false, error: `${robloxUser.name} is not a member of this group.` });
+    }
+    if (!roles) {
+      return res.json({ success: false, error: 'Could not load group roles — check your API key.' });
+    }
+
+    // membership.role is "groups/{groupId}/roles/{roleId}" — extract the role ID
+    const currentRoleId = membership.role?.split('/').pop();
+    const currentRole = roles.find((r) => String(r.id) === String(currentRoleId));
+
+    return res.json({
+      success: true,
+      robloxId: robloxUser.id,
+      robloxUsername: robloxUser.name,
+      currentRank: currentRole?.rank ?? 0,
+      currentRankName: currentRole?.displayName ?? 'Unknown',
+      roles,
+    });
+  } catch (err) {
+    logger.error('Rank lookup error:', err);
+    return res.json({ success: false, error: 'Unexpected error during lookup.' });
+  }
+});
+
+dashboardAuthRouter.post('/dashboard/server/:guildId/rank-change', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return res.json({ success: false, error: 'Not authorized.' });
+
+  const { robloxId, targetRank } = req.body;
+
+  if (!robloxId || targetRank === undefined) {
+    return res.json({ success: false, error: 'Missing robloxId or targetRank.' });
+  }
+  if (Number(targetRank) === 255) {
+    return res.json({ success: false, error: 'Cannot assign the Owner rank (255).' });
+  }
+
+  try {
+    const roblox = await getConfigValue({ db }, guildId, 'roblox', {});
+    if (!roblox.groupId || !roblox.openCloudKey) {
+      return res.json({ success: false, error: 'Group not configured.' });
+    }
+
+    const result = await updateGroupMemberRank(
+      roblox.groupId,
+      robloxId,
+      Number(targetRank),
+      roblox.openCloudKey,
+    );
+    return res.json(result);
+  } catch (err) {
+    logger.error('Rank change error:', err);
+    return res.json({ success: false, error: 'Unexpected error during rank change.' });
+  }
 });
