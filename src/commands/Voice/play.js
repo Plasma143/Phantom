@@ -2,6 +2,21 @@
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { useMainPlayer } from 'discord-player';
 
+// If a YouTube URL is given, fetch the video title via oEmbed and search by that
+// (discord-player has no YouTube URL extractor, but SoundCloud handles title searches)
+async function resolveQuery(query) {
+  const ytMatch = query.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  if (!ytMatch) return query;
+  try {
+    const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(query)}&format=json`);
+    if (res.ok) {
+      const data = await res.json();
+      return data.title || query;
+    }
+  } catch {}
+  return query;
+}
+
 export default {
   data: new SlashCommandBuilder()
     .setName('play')
@@ -20,7 +35,8 @@ export default {
       return interaction.editReply({ embeds: [errEmbed('Join a voice channel first.')] });
     }
 
-    const query = interaction.options.getString('query');
+    const rawQuery = interaction.options.getString('query');
+    const query = await resolveQuery(rawQuery);
     const player = useMainPlayer();
 
     try {
