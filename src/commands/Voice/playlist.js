@@ -5,7 +5,7 @@
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { useMainPlayer } from 'discord-player';
 import { getFromDb, setInDb, deleteFromDb } from '../../utils/database.js';
-import { getSubscription, getTier } from '../../web/stripePayments.js';
+import { getSubscription, getTier, isOwner } from '../../web/stripePayments.js';
 
 const MAX_PLAYLISTS_PREMIUM    = 5;
 const MAX_PLAYLISTS_ENTERPRISE = 10;
@@ -102,7 +102,7 @@ export default {
 
     // Premium check
     const sub_ = await getSubscription(interaction.guildId);
-    const tier = getTier(sub_);
+    const tier = isOwner(interaction.user.id) ? 'enterprise' : getTier(sub_);
     const isPremium = tier === 'premium' || tier === 'enterprise';
 
     if (!isPremium) {
