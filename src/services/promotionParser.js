@@ -131,6 +131,7 @@ function parseGeneric(lines) {
 export function applyFormat(template, vars) {
   return template
     .replace(/\{username\}/gi, vars.username || 'Unknown')
+    .replace(/\{oldRank\}/gi,  vars.oldRank  || 'N/A')
     .replace(/\{newRank\}/gi,  vars.newRank  || 'Unknown')
     .replace(/\{reason\}/gi,   vars.reason   || 'No reason given')
     .replace(/\{ranker\}/gi,   vars.ranker   || 'Unknown');
@@ -142,3 +143,11 @@ export const DEFAULT_LOG_FORMAT =
   '**New Rank:** {newRank}\n' +
   '**Reason:** {reason}\n' +
   '**Ranked by:** {ranker}';
+
+export const ACCEPT_LOG_FORMAT =
+  '✅ **Group Acceptance**\n' +
+  '**User:** {username}\n' +
+  '**From:** {oldRank}\n' +
+  '**To:** {newRank}\n' +
+  '**Reason:** {reason}\n' +
+  '**Accepted by:** {ranker}';
