@@ -109,6 +109,14 @@ async function getLoggedInUserId(req) {
   } catch { return null; }
 }
 
+// ── Owner bypass ──────────────────────────────────────────────────────────
+// Set PHANTOM_OWNER_ID in Railway to your Discord user ID.
+// The owner gets Enterprise free in every server, forever.
+export function isOwner(userId) {
+  const ownerId = process.env.PHANTOM_OWNER_ID;
+  return !!(ownerId && userId && userId === ownerId);
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function subKey(guildId) { return `subscription:${guildId}`; }
