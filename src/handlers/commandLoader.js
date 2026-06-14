@@ -289,13 +289,17 @@ const registeredNames = new Set();
             }
         }
 
-        // Always register globally so commands work in every server
-        try {
-            logger.info('Registering commands globally...');
-            await client.application.commands.set(commands);
-            logger.info(`Successfully registered ${commands.length} commands globally`);
-        } catch (err) {
-            logger.error('Failed to register global commands:', err);
+        // Global registration is handled in the ready event (client.application not available here yet)
+        if (client.application) {
+            try {
+                logger.info('Registering commands globally...');
+                await client.application.commands.set(commands);
+                logger.info(`Successfully registered ${commands.length} commands globally`);
+            } catch (err) {
+                logger.error('Failed to register global commands:', err);
+            }
+        } else {
+            logger.info('client.application not ready yet — global registration deferred to ready event');
         }
     } catch (error) {
         logger.error('Error registering commands:', error);
