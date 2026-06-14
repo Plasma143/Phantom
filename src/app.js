@@ -374,9 +374,207 @@ class PhantomBot extends Client {
     <a href="/dashboard">Dashboard</a>
     <a href="/dashboard/commands">Commands</a>
     <a href="https://discord.gg/phantomstudios" target="_blank">Support</a>
+    <a href="/tos">Terms of Service</a>
+    <a href="/privacy">Privacy Policy</a>
   </p>
 </footer>
 
+</body>
+</html>`);
+    });
+
+    // ── Terms of Service ──────────────────────────────────────────────────────
+    app.get('/tos', (req, res) => {
+      res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Terms of Service — Phantom</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0f; color: #e8e0ff; line-height: 1.8; }
+    .nav { display: flex; align-items: center; justify-content: space-between; padding: 18px 48px; background: rgba(10,10,15,0.95); border-bottom: 1px solid #1e1040; }
+    .nav-logo { font-size: 20px; font-weight: 800; color: #c084fc; text-decoration: none; }
+    .nav a { color: #a78bfa; text-decoration: none; font-size: 14px; }
+    .container { max-width: 780px; margin: 60px auto; padding: 0 24px 80px; }
+    h1 { font-size: 36px; font-weight: 900; color: #fff; margin-bottom: 8px; }
+    .updated { color: #5b4fa0; font-size: 13px; margin-bottom: 48px; }
+    h2 { font-size: 20px; font-weight: 700; color: #c084fc; margin: 40px 0 12px; }
+    p { color: #a78bfa; margin-bottom: 16px; font-size: 15px; }
+    ul { color: #a78bfa; padding-left: 24px; margin-bottom: 16px; font-size: 15px; }
+    ul li { margin-bottom: 8px; }
+    a { color: #7c3aed; }
+    .footer { text-align: center; padding: 32px 24px; border-top: 1px solid #1e1040; color: #5b4fa0; font-size: 13px; }
+    .footer a { color: #7c3aed; margin: 0 10px; }
+  </style>
+</head>
+<body>
+<nav class="nav">
+  <a href="/" class="nav-logo">👻 Phantom</a>
+  <a href="/">← Back to home</a>
+</nav>
+<div class="container">
+  <h1>Terms of Service</h1>
+  <p class="updated">Last updated: 14 June 2026</p>
+
+  <h2>1. Acceptance of Terms</h2>
+  <p>By adding Phantom ("the Bot") to your Discord server or using the Phantom Dashboard ("the Service"), you agree to be bound by these Terms of Service. If you do not agree, do not use the Service.</p>
+
+  <h2>2. Description of Service</h2>
+  <p>Phantom is a Discord bot and web dashboard that connects Discord servers to Roblox groups. Features include Roblox account linking, role synchronisation, rank management, audit logging, and more.</p>
+
+  <h2>3. Eligibility</h2>
+  <p>You must be at least 13 years of age to use the Service, in compliance with Discord's Terms of Service. By using Phantom, you confirm that you meet this requirement.</p>
+
+  <h2>4. User Responsibilities</h2>
+  <p>By using the Service, you agree to:</p>
+  <ul>
+    <li>Not use the Service for any unlawful purpose or in violation of Discord's or Roblox's Terms of Service</li>
+    <li>Not attempt to exploit, abuse, or disrupt the Service</li>
+    <li>Not use the Service to harass, harm, or demote members without legitimate reason</li>
+    <li>Take responsibility for all actions taken through your server's Phantom configuration</li>
+  </ul>
+
+  <h2>5. Roblox Integration</h2>
+  <p>Phantom uses Roblox's Open Cloud API to read group data and, when configured, apply rank changes. By enabling rank management features, you confirm you have the authority to make changes within your Roblox group. Phantom Studios takes no responsibility for unintended rank changes resulting from misconfiguration.</p>
+
+  <h2>6. Subscriptions and Billing</h2>
+  <p>Premium and Enterprise tiers are billed monthly through Stripe. Subscriptions renew automatically unless cancelled. You may cancel at any time through the billing portal accessible from your dashboard. Refunds are not provided for partial billing periods unless required by Australian Consumer Law.</p>
+
+  <h2>7. Data and Privacy</h2>
+  <p>Phantom stores Discord user IDs, Roblox usernames, and server configuration data necessary to provide the Service. We do not sell your data to third parties. See our <a href="/privacy">Privacy Policy</a> for full details.</p>
+
+  <h2>8. Service Availability</h2>
+  <p>We aim to keep Phantom running 24/7 but do not guarantee uninterrupted availability. We reserve the right to perform maintenance, updates, or shut down the Service with reasonable notice.</p>
+
+  <h2>9. Termination</h2>
+  <p>We reserve the right to suspend or terminate access to the Service for servers or users found to be violating these Terms, Discord's Terms of Service, or Roblox's Terms of Service, without prior notice.</p>
+
+  <h2>10. Limitation of Liability</h2>
+  <p>Phantom Studios is not liable for any indirect, incidental, or consequential damages arising from use of the Service, including but not limited to unintended rank changes, data loss, or service interruptions.</p>
+
+  <h2>11. Changes to Terms</h2>
+  <p>We may update these Terms from time to time. Continued use of the Service after changes constitutes acceptance of the updated Terms. We will notify users of significant changes via the Phantom Studios Discord server.</p>
+
+  <h2>12. Contact</h2>
+  <p>Questions about these Terms? Join our <a href="https://discord.gg/phantomstudios" target="_blank">support server</a> or open a ticket.</p>
+</div>
+<footer class="footer">
+  © 2026 Phantom Studios &nbsp;·&nbsp;
+  <a href="/">Home</a>
+  <a href="/privacy">Privacy Policy</a>
+  <a href="/dashboard">Dashboard</a>
+</footer>
+</body>
+</html>`);
+    });
+
+    // ── Privacy Policy ────────────────────────────────────────────────────────
+    app.get('/privacy', (req, res) => {
+      res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy Policy — Phantom</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0f; color: #e8e0ff; line-height: 1.8; }
+    .nav { display: flex; align-items: center; justify-content: space-between; padding: 18px 48px; background: rgba(10,10,15,0.95); border-bottom: 1px solid #1e1040; }
+    .nav-logo { font-size: 20px; font-weight: 800; color: #c084fc; text-decoration: none; }
+    .nav a { color: #a78bfa; text-decoration: none; font-size: 14px; }
+    .container { max-width: 780px; margin: 60px auto; padding: 0 24px 80px; }
+    h1 { font-size: 36px; font-weight: 900; color: #fff; margin-bottom: 8px; }
+    .updated { color: #5b4fa0; font-size: 13px; margin-bottom: 48px; }
+    h2 { font-size: 20px; font-weight: 700; color: #c084fc; margin: 40px 0 12px; }
+    p { color: #a78bfa; margin-bottom: 16px; font-size: 15px; }
+    ul { color: #a78bfa; padding-left: 24px; margin-bottom: 16px; font-size: 15px; }
+    ul li { margin-bottom: 8px; }
+    a { color: #7c3aed; }
+    .footer { text-align: center; padding: 32px 24px; border-top: 1px solid #1e1040; color: #5b4fa0; font-size: 13px; }
+    .footer a { color: #7c3aed; margin: 0 10px; }
+  </style>
+</head>
+<body>
+<nav class="nav">
+  <a href="/" class="nav-logo">👻 Phantom</a>
+  <a href="/">← Back to home</a>
+</nav>
+<div class="container">
+  <h1>Privacy Policy</h1>
+  <p class="updated">Last updated: 14 June 2026</p>
+
+  <h2>1. Introduction</h2>
+  <p>Phantom Studios ("we", "us", "our") operates the Phantom Discord bot and web dashboard. This Privacy Policy explains what data we collect, how we use it, and your rights regarding that data.</p>
+
+  <h2>2. Data We Collect</h2>
+  <p>We collect and store the minimum data necessary to provide the Service:</p>
+  <ul>
+    <li><strong>Discord User ID</strong> — used to identify your account across sessions</li>
+    <li><strong>Roblox Username and User ID</strong> — stored when you link your Roblox account</li>
+    <li><strong>Discord Server ID and Configuration</strong> — your server's Phantom settings (group ID, role mappings, audit log channels, etc.)</li>
+    <li><strong>Roblox Open Cloud API Key</strong> — stored encrypted, used only to apply rank changes in your Roblox group</li>
+    <li><strong>Subscription Status</strong> — whether your server has an active Premium or Enterprise subscription, managed via Stripe</li>
+  </ul>
+
+  <h2>3. Data We Do Not Collect</h2>
+  <ul>
+    <li>We do not read, store, or log message content from your Discord server</li>
+    <li>We do not collect passwords, email addresses, or payment card details (payments handled by Stripe)</li>
+    <li>We do not track browsing behaviour or use advertising trackers</li>
+  </ul>
+
+  <h2>4. How We Use Your Data</h2>
+  <p>Data collected is used solely to provide the Service:</p>
+  <ul>
+    <li>Linking your Discord account to your Roblox account</li>
+    <li>Syncing Discord roles based on your Roblox group rank</li>
+    <li>Applying rank changes via the dashboard or auto-rank system</li>
+    <li>Displaying linked member information in the dashboard</li>
+    <li>Processing and managing your subscription</li>
+  </ul>
+
+  <h2>5. Data Sharing</h2>
+  <p>We do not sell, rent, or share your data with third parties except:</p>
+  <ul>
+    <li><strong>Stripe</strong> — for payment processing. Stripe's privacy policy applies to payment data</li>
+    <li><strong>Discord</strong> — OAuth2 is used for dashboard login. Discord's privacy policy applies</li>
+    <li><strong>Roblox</strong> — the Open Cloud API is called to read/write group data. Roblox's privacy policy applies</li>
+    <li><strong>Legal requirements</strong> — if required by law or to protect our rights</li>
+  </ul>
+
+  <h2>6. Data Retention</h2>
+  <p>We retain your data for as long as you use the Service. When you remove Phantom from your server, server configuration data is no longer actively used. You may request deletion of your data at any time by contacting us.</p>
+
+  <h2>7. Security</h2>
+  <p>We take reasonable steps to protect your data, including encrypted storage of API keys and secure HTTPS connections. No system is 100% secure — please contact us immediately if you suspect a breach.</p>
+
+  <h2>8. Your Rights</h2>
+  <p>Under Australian Privacy Law and GDPR (where applicable), you have the right to:</p>
+  <ul>
+    <li>Access the data we hold about you</li>
+    <li>Request correction of inaccurate data</li>
+    <li>Request deletion of your data</li>
+    <li>Withdraw consent for data processing</li>
+  </ul>
+  <p>To exercise these rights, open a ticket in our <a href="https://discord.gg/phantomstudios" target="_blank">support server</a>.</p>
+
+  <h2>9. Children's Privacy</h2>
+  <p>Phantom is not directed at children under 13. We do not knowingly collect data from children under 13. If you believe we have inadvertently collected such data, please contact us immediately.</p>
+
+  <h2>10. Changes to This Policy</h2>
+  <p>We may update this Privacy Policy from time to time. We will notify users of significant changes via the Phantom Studios Discord server. Continued use of the Service constitutes acceptance of the updated policy.</p>
+
+  <h2>11. Contact</h2>
+  <p>Questions about this Privacy Policy? Join our <a href="https://discord.gg/phantomstudios" target="_blank">support server</a> or open a ticket.</p>
+</div>
+<footer class="footer">
+  © 2026 Phantom Studios &nbsp;·&nbsp;
+  <a href="/">Home</a>
+  <a href="/tos">Terms of Service</a>
+  <a href="/dashboard">Dashboard</a>
+</footer>
 </body>
 </html>`);
     });
