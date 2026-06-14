@@ -7,6 +7,7 @@ import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { getServerCounters, updateCounter } from '../services/serverstatsService.js';
 import { setBirthday as dbSetBirthday } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
+import { postAuditLog, timeAgo } from '../services/phantomAudit.js';
 
 export default {
   name: Events.GuildMemberAdd,
@@ -137,6 +138,19 @@ export default {
         } catch (error) {
             logger.debug('Error logging member join:', error);
         }
+
+        // ── Phantom audit log → #discord-logs ──
+        await postAuditLog(member.client, guild, 'discord', {
+          color: 0x57F287,
+          title: '👋 Member Joined',
+          thumbnail: user.displayAvatarURL({ size: 64 }),
+          fields: [
+            { name: 'User', value: `${user} (${user.tag})`, inline: true },
+            { name: 'Account Age', value: timeAgo(Date.now() - user.createdTimestamp), inline: true },
+            { name: 'Member Count', value: String(guild.memberCount), inline: true },
+          ],
+          footer: `ID: ${user.id}`,
+        });
         
         
         try {
@@ -210,6 +224,3 @@ async function assignRoleSafely(member, role) {
         logger.warn(`Failed to assign role ${role.id} to member ${member.id}:`, error);
     }
 }
-
-
-
