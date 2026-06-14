@@ -227,3 +227,70 @@ export async function updateGroupMemberRank(groupId, robloxUserId, targetRank, a
     return { success: false, error: 'Unexpected error contacting Roblox.' };
   }
 }
+
+/**
+ * Get all pending join requests for a group (up to 20 per page).
+ * Returns { joinRequests: [...], nextPageToken } or throws on error.
+ */
+export async function getGroupJoinRequests(groupId, apiKey, pageToken = null) {
+  const url = new URL(`${OPEN_CLOUD_API}/groups/${groupId}/join-requests`);
+  url.searchParams.set('maxPageSize', '20');
+  if (pageToken) url.searchParams.set('pageToken', pageToken);
+
+  const res = await fetch(url.toString(), {
+    headers: { 'x-api-key': apiKey },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to get join requests: ${res.status} ${text}`);
+  }
+
+  const data = await res.json();
+  // Roblox returns { joinRequests: [{ user: 'users/123', ... }], nextPageToken }
+  return data;
+}
+
+/**
+ * Accept a pending join request for a specific Roblox user.
+ * Returns true on success, throws on error.
+ */
+export async function acceptGroupJoinRequest(groupId, robloxUserId, apiKey) {
+  const res = await fetch(`${OPEN_CLOUD_API}/groups/${groupId}/join-requests/${robloxUserId}:accept`, {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: '{}',
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to accept join request: ${res.status} ${text}`);
+  }
+
+  return true;
+}
+
+/**
+ * Decline a pending join request for a specific Roblox user.
+ * Returns true on success, throws on error.
+ */
+export async function declineGroupJoinRequest(groupId, robloxUserId, apiKey) {
+  const res = await fetch(`${OPEN_CLOUD_API}/groups/${groupId}/join-requests/${robloxUserId}:decline`, {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: '{}',
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to decline join request: ${res.status} ${text}`);
+  }
+
+  return true;
+}
