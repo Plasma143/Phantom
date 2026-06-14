@@ -1,5 +1,8 @@
 FROM node:20-alpine
 
+# Install ffmpeg for discord-player audio processing
+RUN apk add --no-cache ffmpeg
+
 # Create app directory
 WORKDIR /usr/src/app
 
