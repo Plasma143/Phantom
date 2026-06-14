@@ -1,4 +1,4 @@
-import { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, AttachmentBuilder, MessageFlags } from 'discord.js';
+import { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, AttachmentBuilder, MessageFlags, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
 import { createEmbed, errorEmbed, successEmbed } from '../utils/embeds.js';
 import { createTicket, closeTicket, claimTicket, updateTicketPriority } from '../services/ticket.js';
 import { getGuildConfig } from '../services/guildConfig.js';
@@ -128,26 +128,58 @@ const createTicketHandler = {
           flags: MessageFlags.Ephemeral
         });
       }
-      
-      const modal = new ModalBuilder()
-        .setCustomId('create_ticket_modal')
-        .setTitle('Create a Ticket');
 
-      const reasonInput = new TextInputBuilder()
-        .setCustomId('reason')
-        .setLabel('Why are you creating this ticket?')
-        .setStyle(TextInputStyle.Paragraph)
-        .setPlaceholder('Describe your issue...')
-        .setRequired(true)
-        .setMaxLength(1000);
+      // Show category dropdown first
+      const categoryMenu = new StringSelectMenuBuilder()
+        .setCustomId('ticketCategory')
+        .setPlaceholder('What do you need help with?')
+        .addOptions([
+          new StringSelectMenuOptionBuilder()
+            .setLabel('General Support')
+            .setDescription('General questions or help')
+            .setValue('general_support')
+            .setEmoji('💬'),
+          new StringSelectMenuOptionBuilder()
+            .setLabel('Bug Report')
+            .setDescription('Report a bug or technical issue')
+            .setValue('bug_report')
+            .setEmoji('🐛'),
+          new StringSelectMenuOptionBuilder()
+            .setLabel('Billing / Subscription')
+            .setDescription('Payment, subscription or billing questions')
+            .setValue('billing')
+            .setEmoji('💳'),
+          new StringSelectMenuOptionBuilder()
+            .setLabel('Partnership')
+            .setDescription('Partnership or collaboration inquiries')
+            .setValue('partnership')
+            .setEmoji('🤝'),
+          new StringSelectMenuOptionBuilder()
+            .setLabel('Appeal')
+            .setDescription('Appeal a ban, mute or other moderation action')
+            .setValue('appeal')
+            .setEmoji('⚖️'),
+          new StringSelectMenuOptionBuilder()
+            .setLabel('Other')
+            .setDescription('Something not listed above')
+            .setValue('other')
+            .setEmoji('📋'),
+        ]);
 
-      const actionRow = new ActionRowBuilder().addComponents(reasonInput);
-      modal.addComponents(actionRow);
-      
-      // showModal must be called directly without defer
-      await interaction.showModal(modal);
+      const row = new ActionRowBuilder().addComponents(categoryMenu);
+
+      await interaction.reply({
+        embeds: [createEmbed({
+          title: '🎫 Create a Ticket',
+          description: 'Please select the category that best describes your request.',
+          color: 0x5865F2,
+        })],
+        components: [row],
+        flags: MessageFlags.Ephemeral,
+      });
+
     } catch (error) {
-      logger.error('Error creating ticket modal:', error);
+      logger.error('Error showing ticket category menu:', error);
       if (!interaction.replied && !interaction.deferred) {
         await interaction.reply({
           embeds: [errorEmbed('Error', 'Could not open ticket creation form.')],
@@ -170,12 +202,26 @@ const createTicketModalHandler = {
       const reason = interaction.fields.getTextInputValue('reason');
       const config = await getGuildConfig(client, interaction.guildId);
       const categoryId = config.ticketCategoryId || null;
+
+      // Extract ticket category from customId (format: create_ticket_modal:category_value)
+      const categoryValue = interaction.customId.split(':')[1] || 'general_support';
+      const categoryLabels = {
+        general_support: '💬 General Support',
+        bug_report:      '🐛 Bug Report',
+        billing:         '💳 Billing / Subscription',
+        partnership:     '🤝 Partnership',
+        appeal:          '⚖️ Appeal',
+        other:           '📋 Other',
+      };
+      const categoryLabel = categoryLabels[categoryValue] || '💬 General Support';
+
+      const fullReason = `**Category:** ${categoryLabel}\n\n${reason}`;
       
       const result = await createTicket(
         interaction.guild,
         interaction.member,
         categoryId,
-        reason
+        fullReason
       );
       
       if (result.success) {
@@ -743,6 +789,52 @@ const deleteTicketHandler = {
 };
 
 export default createTicketHandler;
+
+// Handles the ticket category dropdown selection — shows the reason modal after
+export const ticketCategorySelectMenu = {
+  name: 'ticketCategory',
+  async execute(interaction, client) {
+    try {
+      const categoryValue = interaction.values[0];
+
+      const categoryLabels = {
+        general_support:  '💬 General Support',
+        bug_report:       '🐛 Bug Report',
+        billing:          '💳 Billing / Subscription',
+        partnership:      '🤝 Partnership',
+        appeal:           '⚖️ Appeal',
+        other:            '📋 Other',
+      };
+
+      const categoryLabel = categoryLabels[categoryValue] || 'General Support';
+
+      const modal = new ModalBuilder()
+        .setCustomId(`create_ticket_modal:${categoryValue}`)
+        .setTitle(`${categoryLabel}`);
+
+      const reasonInput = new TextInputBuilder()
+        .setCustomId('reason')
+        .setLabel('Describe your issue')
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder('Please provide as much detail as possible...')
+        .setRequired(true)
+        .setMaxLength(1000);
+
+      modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+      await interaction.showModal(modal);
+
+    } catch (error) {
+      logger.error('Error showing ticket modal from category:', error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          embeds: [errorEmbed('Error', 'Could not open the ticket form.')],
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+    }
+  },
+};
+
 export { 
   createTicketModalHandler, 
   closeTicketModalHandler,
@@ -754,7 +846,3 @@ export {
   reopenTicketHandler,
   deleteTicketHandler 
 };
-
-
-
-
