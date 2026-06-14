@@ -15,8 +15,10 @@
     "backup:drill": "node scripts/restore-drill.js"
   },
   "dependencies": {
+    "@discord-player/extractor": "^7.2.0",
     "@discordjs/rest": "^2.6.1",
     "axios": "^1.15.2",
+    "discord-player": "^7.2.0",
     "discord.js": "^14.15.3",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
