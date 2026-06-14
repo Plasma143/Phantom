@@ -287,8 +287,15 @@ const registeredNames = new Set();
                 
                 throw error;
             }
-        } else {
-            logger.info('Skipping global command registration - bot is guild-only');
+        }
+
+        // Always register globally so commands work in every server
+        try {
+            logger.info('Registering commands globally...');
+            await client.application.commands.set(commands);
+            logger.info(`Successfully registered ${commands.length} commands globally`);
+        } catch (err) {
+            logger.error('Failed to register global commands:', err);
         }
     } catch (error) {
         logger.error('Error registering commands:', error);
@@ -325,5 +332,3 @@ export async function reloadCommand(client, commandName) {
         return { success: false, message: `Error reloading command: ${error.message}` };
     }
 }
-
-
