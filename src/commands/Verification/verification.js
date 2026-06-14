@@ -161,24 +161,6 @@ async function handleSetup(interaction, guild, client) {
     }
 
     const guildConfig = await getGuildConfig(client, guild.id);
-    const welcomeConfig = await getWelcomeConfig(client, guild.id);
-    const hasAutoVerifyEnabled = Boolean(guildConfig.verification?.autoVerify?.enabled);
-    const hasAutoRoleConfigured = Boolean(guildConfig.autoRole) || (Array.isArray(welcomeConfig.roleIds) && welcomeConfig.roleIds.length > 0);
-
-    if (hasAutoVerifyEnabled || hasAutoRoleConfigured) {
-        throw createError(
-            'Verification setup blocked by conflicting onboarding system',
-            ErrorTypes.CONFIGURATION,
-            'You cannot enable the verification system while **AutoVerify** or **AutoRole** is configured. Disable those first.',
-            {
-                guildId: guild.id,
-                hasAutoVerifyEnabled,
-                hasAutoRoleConfigured,
-                expected: true,
-                suppressErrorLog: true
-            }
-        );
-    }
 
     await InteractionHelper.safeDefer(interaction);
 
@@ -260,7 +242,3 @@ async function handleRemove(interaction, guild, client) {
         );
     }
 }
-
-
-
-
