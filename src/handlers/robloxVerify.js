@@ -1,286 +1,143 @@
-// src/handlers/robloxVerify.js
+// src/web/robloxOAuth.js
 //
-// Roblox account-linking flow — separate from your existing verify_user
-// button. That one gates server access; this one links a Discord account
-// to a specific Roblox account and syncs roles based on Roblox group rank.
-//
-//   "Link Roblox" button -> modal asking for Roblox username
-//   modal submit          -> looks up the account, shows a one-time code
-//   "Confirm" button      -> checks the bio for that code, links + syncs roles
-//   "Update" button       -> re-syncs roles/nickname for an already-linked user
-//   "Sign in with Roblox" -> shows a link button that starts the OAuth login flow
+// Adds "Sign in with Roblox" routes onto the bot's existing Express server
+// (the one with /health and /ready). Two routes:
+//   GET /auth/roblox          -> redirects the user to Roblox's login page
+//   GET /auth/roblox/callback -> Roblox sends them back here with a code;
+//                                 we exchange it for their identity and save the link.
 
-import {
-  MessageFlags,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-} from 'discord.js';
-import { successEmbed, errorEmbed } from '../utils/embeds.js';
-import { handleInteractionError } from '../utils/errorHandler.js';
+import express from 'express';
+import { randomUUID } from 'crypto';
+import { saveRobloxLink } from '../utils/robloxDb.js';
 import { logger } from '../utils/logger.js';
-import { InteractionHelper } from '../utils/interactionHelper.js';
-import {
-  getRobloxUserByUsername,
-  getRobloxRankInGroup,
-  generateVerificationCode,
-  bioContainsCode,
-} from '../utils/roblox.js';
-import { saveRobloxLink, getRobloxLink } from '../utils/robloxDb.js';
-import { botConfig } from '../config/bot.js';
+import { getClient } from '../utils/clientRef.js';
 
-export const ROBLOX_LINK_BUTTON_ID = 'roblox_link_start';
-export const ROBLOX_CONFIRM_BUTTON_ID = 'roblox_link_confirm';
-export const ROBLOX_UPDATE_BUTTON_ID = 'roblox_link_update';
-export const ROBLOX_OAUTH_BUTTON_ID = 'roblox_oauth_start';
-export const USERNAME_MODAL_ID = 'roblox_username_modal';
-export const USERNAME_INPUT_ID = 'roblox_username_input';
+const ROBLOX_AUTHORIZE_URL = 'https://apis.roblox.com/oauth/v1/authorize';
+const ROBLOX_TOKEN_URL = 'https://apis.roblox.com/oauth/v1/token';
+const ROBLOX_USERINFO_URL = 'https://apis.roblox.com/oauth/v1/userinfo';
 
-// Base URL of this bot's web server (Railway's public domain).
-// Override with the PUBLIC_URL env var if the domain ever changes.
-const PUBLIC_URL = process.env.PUBLIC_URL || 'https://r2-d2-production.up.railway.app';
+const CLIENT_ID = process.env.ROBLOX_OAUTH_CLIENT_ID;
+const CLIENT_SECRET = process.env.ROBLOX_OAUTH_CLIENT_SECRET;
+const REDIRECT_URI = process.env.ROBLOX_OAUTH_REDIRECT_URI || 'https://r2-d2-production.up.railway.app/auth/roblox/callback';
 
-// Tracks in-progress links: discordId -> { robloxId, robloxUsername, code }
-// Resets on restart — fine, codes are only needed briefly.
-const pendingLinks = new Map();
+// Tracks in-progress logins: state -> { discordId, createdAt }
+const pendingStates = new Map();
+const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-function confirmButtonRow() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(ROBLOX_CONFIRM_BUTTON_ID)
-      .setLabel('Confirm')
-      .setStyle(ButtonStyle.Success),
-  );
+function cleanupExpiredStates() {
+  const now = Date.now();
+  for (const [state, entry] of pendingStates) {
+    if (now - entry.createdAt > STATE_TTL_MS) pendingStates.delete(state);
+  }
 }
 
-// "Link Roblox" button — opens a modal for the Roblox username.
-// IMPORTANT: showModal must be the FIRST response to this interaction,
-// so this handler does NOT call InteractionHelper.safeDefer.
-export async function handleRobloxLinkButton(interaction, client) {
+export const robloxOAuthRouter = express.Router();
+
+// Step A: send the user to Roblox's login/consent page.
+robloxOAuthRouter.get('/auth/roblox', (req, res) => {
+  const discordId = req.query.discordId;
+  const guildId = req.query.guildId;
+  if (!discordId) {
+    return res.status(400).send('Missing discordId.');
+  }
+
+  cleanupExpiredStates();
+  const state = randomUUID();
+  pendingStates.set(state, { discordId, guildId: guildId || null, createdAt: Date.now() });
+
+  const params = new URLSearchParams({
+    client_id: CLIENT_ID,
+    redirect_uri: REDIRECT_URI,
+    scope: 'openid profile',
+    response_type: 'code',
+    state,
+  });
+
+  res.redirect(`${ROBLOX_AUTHORIZE_URL}?${params.toString()}`);
+});
+
+// Step B: Roblox redirects back here with a one-time code.
+robloxOAuthRouter.get('/auth/roblox/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+
+  if (error) {
+    return res.status(400).send(`Roblox login was cancelled or failed: ${error}`);
+  }
+
+  const pending = pendingStates.get(state);
+  if (!pending) {
+    return res.status(400).send('This login link expired or was already used. Go back to Discord and click the button again.');
+  }
+  pendingStates.delete(state);
+
   try {
-    if (!interaction.guild) {
-      return await interaction.reply({
-        embeds: [errorEmbed("Guild Only", "This button can only be used in a server.")],
-        flags: MessageFlags.Ephemeral,
-      });
+    const tokenRes = await fetch(ROBLOX_TOKEN_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')}`,
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: REDIRECT_URI,
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      logger.error('Roblox token exchange failed', { status: tokenRes.status, body: await tokenRes.text() });
+      return res.status(500).send('Something went wrong talking to Roblox. Please try again from Discord.');
     }
 
-    const existing = await getRobloxLink(interaction.user.id);
-    if (existing) {
-      return await interaction.reply({
-        embeds: [errorEmbed(
-          "Already Linked",
-          `You're already linked to Roblox account **${existing.roblox_username}**. Use the Update button if your rank changed.`,
-        )],
-        flags: MessageFlags.Ephemeral,
-      });
+    const tokens = await tokenRes.json();
+
+    const userRes = await fetch(ROBLOX_USERINFO_URL, {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+
+    if (!userRes.ok) {
+      logger.error('Roblox userinfo fetch failed', { status: userRes.status });
+      return res.status(500).send('Could not retrieve your Roblox profile. Please try again from Discord.');
     }
 
-    const modal = new ModalBuilder()
-      .setCustomId(USERNAME_MODAL_ID)
-      .setTitle('Link Roblox Account');
+    const profile = await userRes.json();
+    const robloxUsername = profile.preferred_username || profile.name;
 
-    const usernameInput = new TextInputBuilder()
-      .setCustomId(USERNAME_INPUT_ID)
-      .setLabel('Your Roblox username')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true);
+    await saveRobloxLink(pending.discordId, profile.sub, robloxUsername);
 
-    modal.addComponents(new ActionRowBuilder().addComponents(usernameInput));
-    await interaction.showModal(modal);
-  } catch (error) {
-    logger.error('Error in Roblox link button handler', {
-      error: error.message,
-      userId: interaction.user.id,
-    });
-    await handleInteractionError(interaction, error, { command: 'roblox_link', action: 'show_modal' });
-  }
-}
-
-// "Sign in with Roblox" button — replies with a link button that starts
-// the OAuth login flow on the bot's web server.
-export async function handleRobloxOAuthButton(interaction, client) {
-  try {
-    const url = `${PUBLIC_URL}/auth/roblox?discordId=${interaction.user.id}`;
-
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setLabel('Sign in with Roblox')
-        .setStyle(ButtonStyle.Link)
-        .setURL(url),
-    );
-
-    await interaction.reply({
-      embeds: [successEmbed(
-        "Sign in with Roblox",
-        "Click the button below to log in with your Roblox account in your browser.\n\n" +
-          "This option is still in testing and may only work for a few people until Roblox approves it — " +
-          "if it doesn't work, use **Link Roblox** instead.",
-      )],
-      components: [row],
-      flags: MessageFlags.Ephemeral,
-    });
-  } catch (error) {
-    logger.error('Error in Roblox OAuth button handler', {
-      error: error.message,
-      userId: interaction.user.id,
-    });
-    await handleInteractionError(interaction, error, { command: 'roblox_oauth', action: 'show_link' });
-  }
-}
-
-// Modal submit — looks up the Roblox account and generates a one-time code.
-export async function handleRobloxUsernameModal(interaction, client) {
-  try {
-    await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
-
-    const username = interaction.fields.getTextInputValue(USERNAME_INPUT_ID).trim();
-    const robloxUser = await getRobloxUserByUsername(username);
-
-    if (!robloxUser) {
-      return await InteractionHelper.safeEditReply(interaction, {
-        embeds: [errorEmbed(
-          "User Not Found",
-          `Couldn't find a Roblox user named **${username}**. Check the spelling and try again.`,
-        )],
-      });
+    // Set the member's Discord nickname to their Roblox username
+    try {
+      const client = getClient();
+      if (client && pending.guildId) {
+        const guild = client.guilds.cache.get(pending.guildId);
+        if (guild) {
+          const member = await guild.members.fetch(pending.discordId).catch(() => null);
+          if (member) {
+            await member.setNickname(robloxUsername).catch(() => {
+              // Can't rename server owner or members with higher roles — safe to ignore
+            });
+          }
+        }
+      }
+    } catch (err) {
+      logger.debug('Could not set nickname after OAuth link:', err.message);
     }
 
-    const code = generateVerificationCode();
-    pendingLinks.set(interaction.user.id, {
-      robloxId: robloxUser.id,
-      robloxUsername: robloxUser.name,
-      code,
+    logger.info('Linked Roblox account via OAuth', {
+      discordId: pending.discordId,
+      robloxId: profile.sub,
+      robloxUsername,
     });
 
-    logger.debug('User started Roblox link', {
-      userId: interaction.user.id,
-      robloxId: robloxUser.id,
-      robloxUsername: robloxUser.name,
-    });
-
-    await InteractionHelper.safeEditReply(interaction, {
-      embeds: [successEmbed(
-        "Almost there!",
-        `1. Open your [Roblox profile](https://www.roblox.com/users/${robloxUser.id}/profile)\n` +
-          `2. Edit your **About** section to include this code:\n\`\`\`${code}\`\`\`\n` +
-          `3. Click **Confirm** below once it's saved.`,
-      )],
-      components: [confirmButtonRow()],
-    });
-  } catch (error) {
-    logger.error('Error in Roblox username modal handler', {
-      error: error.message,
-      userId: interaction.user.id,
-    });
-    await handleInteractionError(interaction, error, { command: 'roblox_link', action: 'username_modal' });
+    res.send(`
+      <html><body style="font-family: sans-serif; text-align: center; padding: 60px;">
+        <h1>✅ Linked!</h1>
+        <p>Your Discord account is now linked to Roblox account <strong>${robloxUsername}</strong>.</p>
+        <p>You can close this tab and head back to Discord.</p>
+      </body></html>
+    `);
+  } catch (err) {
+    logger.error('Roblox OAuth callback error', { error: err.message });
+    res.status(500).send('Something went wrong. Please try again from Discord.');
   }
-}
-
-// "Confirm" button — checks the bio for the code, then links + syncs roles.
-export async function handleRobloxConfirmButton(interaction, client) {
-  try {
-    await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
-
-    const pending = pendingLinks.get(interaction.user.id);
-    if (!pending) {
-      return await InteractionHelper.safeEditReply(interaction, {
-        embeds: [errorEmbed("Session Expired", "Click the Link Roblox button to start again.")],
-      });
-    }
-
-    const found = await bioContainsCode(pending.robloxId, pending.code);
-    if (!found) {
-      return await InteractionHelper.safeEditReply(interaction, {
-        embeds: [errorEmbed(
-          "Code Not Found",
-          "That code isn't showing up in your bio yet. Roblox can take a minute to update — wait a bit and click Confirm again.",
-        )],
-        components: [confirmButtonRow()],
-      });
-    }
-
-    await saveRobloxLink(interaction.user.id, pending.robloxId, pending.robloxUsername);
-    pendingLinks.delete(interaction.user.id);
-
-    await syncRobloxRoles(interaction.member, pending.robloxId);
-    await interaction.member.setNickname(pending.robloxUsername).catch(() => {
-      // Bot may not be able to rename this member (e.g. server owner) — safe to ignore.
-    });
-
-    logger.info('User linked Roblox account', {
-      userId: interaction.user.id,
-      robloxId: pending.robloxId,
-      robloxUsername: pending.robloxUsername,
-    });
-
-    await InteractionHelper.safeEditReply(interaction, {
-      embeds: [successEmbed("Linked!", `Your Discord account is now linked to Roblox account **${pending.robloxUsername}**.`)],
-      components: [],
-    });
-  } catch (error) {
-    logger.error('Error in Roblox confirm button handler', {
-      error: error.message,
-      userId: interaction.user.id,
-    });
-    await handleInteractionError(interaction, error, { command: 'roblox_link', action: 'confirm' });
-  }
-}
-
-// "Update" button — re-checks rank for an already-linked user and
-// re-syncs their Discord roles/nickname.
-export async function handleRobloxUpdateButton(interaction, client) {
-  try {
-    await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
-
-    const link = await getRobloxLink(interaction.user.id);
-    if (!link) {
-      return await InteractionHelper.safeEditReply(interaction, {
-        embeds: [errorEmbed("Not Linked", "You haven't linked a Roblox account yet — click Link Roblox first.")],
-      });
-    }
-
-    await syncRobloxRoles(interaction.member, link.roblox_id);
-    await interaction.member.setNickname(link.roblox_username).catch(() => {});
-
-    await InteractionHelper.safeEditReply(interaction, {
-      embeds: [successEmbed("Updated!", `Your roles now match your current Roblox group rank, **${link.roblox_username}**.`)],
-    });
-  } catch (error) {
-    logger.error('Error in Roblox update button handler', {
-      error: error.message,
-      userId: interaction.user.id,
-    });
-    await handleInteractionError(interaction, error, { command: 'roblox_link', action: 'update' });
-  }
-}
-
-// Adds/removes Discord roles based on the member's current Roblox group rank.
-// Reads botConfig.roblox.{groupId, rankRoles, verifiedRole}.
-async function syncRobloxRoles(member, robloxId) {
-  const { groupId, rankRoles, verifiedRole } = botConfig.roblox ?? {};
-
-  if (verifiedRole) {
-    await member.roles.add(verifiedRole).catch((err) => logger.error('Add verified role failed:', err));
-  }
-
-  if (!groupId || !rankRoles) return;
-
-  const rank = await getRobloxRankInGroup(robloxId, groupId);
-
-  const allRankRoleIds = Object.values(rankRoles);
-  const toRemove = member.roles.cache
-    .filter((role) => allRankRoleIds.includes(role.id))
-    .map((role) => role.id);
-  if (toRemove.length) {
-    await member.roles.remove(toRemove).catch((err) => logger.error('Remove rank roles failed:', err));
-  }
-
-  const roleId = rankRoles[rank];
-  if (roleId) {
-    await member.roles.add(roleId).catch((err) => logger.error('Add rank role failed:', err));
-  }
-}
+});
