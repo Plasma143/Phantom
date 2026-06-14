@@ -693,6 +693,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
     const isPremium = tier === 'premium' || tier === 'enterprise';
     const isEnterprise = tier === 'enterprise';
     const security = { minAccountAgeDays: 0, newAccountAction: 'none', newAccountRoleId: null, newAccountLogChannel: null, raidProtection: false, raidThreshold: 10, raidWindowSeconds: 30, raidAction: 'lockdown', lockdownActive: false, ...(securityRaw || {}) };
+    const joinRequestConfig = await getConfigValue({ db }, guildId, 'joinRequests', {});
 
     // Upgrade banner for free servers
     const boostBadge = boostDiscount
@@ -949,19 +950,39 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
         </div>
 
         <div id="tab-join-requests" style="display:none; ${PANEL}">
-          <p style="font-weight:700; font-size:18px; margin:0 0 6px;">&#x1F4E8; Group Join Requests</p>
+          <p style="font-weight:700; font-size:18px; margin:0 0 4px;">📨 Group Join Requests</p>
           <p style="color:#949ba4; font-size:13px; margin:0 0 24px; line-height:1.6;">
-            People waiting to join your Roblox group. Manually accept or decline requests below — free for all servers. Auto-accepting on verification requires <strong style="color:#c084fc;">Premium</strong>.
+            Manage pending Roblox group join requests. Manual accept/decline is free. Auto-accepting on verification requires <strong style="color:#c084fc;">Premium</strong>.
           </p>
+
+          ${roblox.groupId && roblox.openCloudKey ? `
+          <!-- Log channel + format — mirrors auto-rank layout -->
+          <hr style="border:none; border-top:1px solid #2b2d31; margin:0 0 24px;" />
+          <p style="font-weight:700; font-size:14px; margin:0 0 4px; color:#fff;">📋 Confirmation Log Channel</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">After accepting a member, Phantom posts a confirmation here.</p>
+          <form method="POST" action="/dashboard/server/${guildId}/join-requests/settings">
+            <select name="logChannelId" style="width:100%; ${fieldStyle} margin-bottom:20px;">
+              <option value="">-- None --</option>${channelOptions(joinRequestConfig.logChannelId)}
+            </select>
+
+            <p style="font-weight:700; font-size:14px; margin:0 0 4px; color:#fff;">📝 Custom Log Format <span style="color:#949ba4; font-weight:400;">(optional)</span></p>
+            <p style="color:#949ba4; font-size:13px; margin:0 0 6px; line-height:1.6;">
+              Define how the confirmation message looks. Variables:
+              <code style="background:#2b2d31; padding:2px 5px; border-radius:4px;">{username}</code>
+              <code style="background:#2b2d31; padding:2px 5px; border-radius:4px;">{newRank}</code>
+              <code style="background:#2b2d31; padding:2px 5px; border-radius:4px;">{reason}</code>
+              <code style="background:#2b2d31; padding:2px 5px; border-radius:4px;">{ranker}</code>
+            </p>
+            <textarea name="customFormat" rows="6" placeholder="Leave blank to use default format:&#10;&#10;✅ **Group Acceptance**&#10;**User:** {username}&#10;**From:** N/A&#10;**To:** {newRank}&#10;**Reason:** {reason}&#10;**Accepted by:** {ranker}" style="width:100%; ${fieldStyle} resize:vertical; font-family:monospace; font-size:13px; line-height:1.6; box-sizing:border-box; margin-bottom:20px;">${joinRequestConfig.customFormat || ''}</textarea>
+            <button type="submit" style="${buttonStyle}">Save Settings</button>
+          </form>
+
           <hr style="border:none; border-top:1px solid #2b2d31; margin:28px 0;" />
 
-          
-          <p style="color:#949ba4; font-size:13px; margin:0 0 16px; line-height:1.6;">
-            People waiting to join your Roblox group. When someone verifies their Roblox account with Phantom, they are <strong style="color:#57f287;">automatically accepted</strong> into the group. You can also manually manage pending requests here.
-          </p>
-          ${roblox.groupId && roblox.openCloudKey ? `
+          <!-- Pending requests list -->
+          <p style="font-weight:700; font-size:14px; margin:0 0 12px; color:#fff;">Pending Requests</p>
           <div id="joinRequestsList" style="background:#111214; border:1px solid #2b2d31; border-radius:8px; padding:16px;">
-            <p style="color:#949ba4; font-size:13px; margin:0;" id="joinRequestsStatus">Loading join requests...</p>
+            <p style="color:#949ba4; font-size:13px; margin:0;">Loading join requests...</p>
           </div>
           <script>
             var _jrRoles = [];
@@ -969,7 +990,6 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
             (async function loadJoinRequests() {
               const container = document.getElementById('joinRequestsList');
               try {
-                // Load roles and requests in parallel
                 const [rolesRes, reqRes] = await Promise.all([
                   fetch('/dashboard/server/${guildId}/group-roles'),
                   fetch('/dashboard/server/${guildId}/join-requests'),
@@ -989,7 +1009,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
                 ).join('');
 
                 container.innerHTML = data.requests.map(req => \`
-                  <div style="padding:14px 0; border-bottom:1px solid #2b2d31;" data-userid="\${req.userId}" id="jr-\${req.userId}">
+                  <div style="padding:14px 0; border-bottom:1px solid #2b2d31;" id="jr-\${req.userId}">
                     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
                       <div>
                         <a href="https://www.roblox.com/users/\${req.userId}/profile" target="_blank"
@@ -1042,55 +1062,38 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
               const rank   = document.getElementById('rankSelect-' + userId).value;
               const reason = document.getElementById('reasonInput-' + userId).value.trim() || 'Accepted into group';
               const msg    = document.getElementById('jrMsg-' + userId);
-              msg.textContent = 'Processing...';
-              msg.style.color = '#949ba4';
+              msg.textContent = 'Processing...'; msg.style.color = '#949ba4';
               try {
                 const r = await fetch('/dashboard/server/${guildId}/join-requests/accept', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ userId, rank, reason, username }),
                 });
                 const d = await r.json();
                 if (d.success) {
-                  const row = document.getElementById('jr-' + userId);
-                  row.innerHTML = '<p style="color:#57f287; font-size:13px; padding:8px 0;">✅ ' + username + ' accepted and ranked to <strong>' + d.rankName + '</strong>.</p>';
-                } else {
-                  msg.textContent = d.error || 'Something went wrong.';
-                  msg.style.color = '#ed4245';
-                }
-              } catch(e) {
-                msg.textContent = 'Error contacting server.';
-                msg.style.color = '#ed4245';
-              }
+                  document.getElementById('jr-' + userId).innerHTML =
+                    '<p style="color:#57f287; font-size:13px; padding:8px 0;">✅ ' + username + ' accepted and ranked to <strong>' + d.rankName + '</strong>.</p>';
+                } else { msg.textContent = d.error || 'Something went wrong.'; msg.style.color = '#ed4245'; }
+              } catch(e) { msg.textContent = 'Error.'; msg.style.color = '#ed4245'; }
             }
 
             async function submitDecline(userId) {
               const msg = document.getElementById('jrMsg-' + userId);
-              msg.textContent = 'Declining...';
-              msg.style.color = '#949ba4';
+              msg.textContent = 'Declining...'; msg.style.color = '#949ba4';
               try {
                 const r = await fetch('/dashboard/server/${guildId}/join-requests/decline', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ userId }),
                 });
                 const d = await r.json();
                 if (d.success) {
-                  const row = document.getElementById('jr-' + userId);
-                  row.innerHTML = '<p style="color:#ed4245; font-size:13px; padding:8px 0;">❌ Request declined.</p>';
-                } else {
-                  msg.textContent = d.error || 'Something went wrong.';
-                  msg.style.color = '#ed4245';
-                }
-              } catch(e) {
-                msg.textContent = 'Error.';
-                msg.style.color = '#ed4245';
-              }
+                  document.getElementById('jr-' + userId).innerHTML =
+                    '<p style="color:#ed4245; font-size:13px; padding:8px 0;">❌ Request declined.</p>';
+                } else { msg.textContent = d.error || 'Something went wrong.'; msg.style.color = '#ed4245'; }
+              } catch(e) { msg.textContent = 'Error.'; msg.style.color = '#ed4245'; }
             }
           </script>
           ` : `<p style="color:#949ba4; padding:16px; background:#111214; border-radius:8px; border:1px solid #2b2d31; font-size:14px;">Configure your Group ID and Open Cloud API key in Group Setup to manage join requests.</p>`}
         </div>
-
         <div id="tab-audit-logs" style="display:none; ${PANEL}">
           ${!isPremium ? `<div style="background:#1a0840; border:1px solid #5b21b6; border-radius:10px; padding:24px; margin-bottom:20px; text-align:center;"><p style="color:#c084fc; font-size:28px; margin:0 0 8px;">🔒</p><p style="color:#fff; font-weight:700; font-size:16px; margin:0 0 6px;">Premium Feature</p><p style="color:#a78bfa; font-size:13px; margin:0 0 16px;">Upgrade to enable audit logging.</p><a href="/upgrade/${guildId}?plan=premium" style="display:inline-block; padding:10px 24px; background:#7c3aed; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; font-weight:600;">Upgrade — $7/mo</a></div>` : ''}
 
@@ -1949,15 +1952,18 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/join-requests/accept', asyn
         rankName = targetRole.displayName;
 
         // Post to log channel if configured
-        const autoRank = await getConfigValue({ db }, guildId, 'autoRank', {});
-        if (autoRank.logChannelId) {
-          const client = (await import('../utils/clientRef.js')).getClient();
-          const guild  = client?.guilds?.cache?.get(guildId);
-          const logChannel = guild?.channels?.cache?.get(autoRank.logChannelId) ||
-            await guild?.channels?.fetch(autoRank.logChannelId).catch(() => null);
+      const autoRank  = await getConfigValue({ db }, guildId, 'autoRank', {});
+      const jrCfg     = await getConfigValue({ db }, guildId, 'joinRequests', {});
+      const logChanId = jrCfg.logChannelId || autoRank.logChannelId;
+      if (logChanId) {
+        const client = (await import('../utils/clientRef.js')).getClient();
+        const guild  = client?.guilds?.cache?.get(guildId);
+        const logChannel = guild?.channels?.cache?.get(logChanId) ||
+          await guild?.channels?.fetch(logChanId).catch(() => null);
           if (logChannel) {
             const { applyFormat, ACCEPT_LOG_FORMAT } = await import('../services/promotionParser.js');
-            const format  = autoRank.customFormat || ACCEPT_LOG_FORMAT;
+            const jrConfig = await getConfigValue({ db }, guildId, 'joinRequests', {});
+            const format  = jrConfig.customFormat || autoRank.customFormat || ACCEPT_LOG_FORMAT;
             const logText = applyFormat(format, {
               username: username || userId,
               oldRank:  'N/A',
@@ -2546,4 +2552,17 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/security/config', async (re
   };
   await pgDb.set(`security:${guildId}`, updated);
   res.redirect(`/dashboard/server/${guildId}?success=Security+settings+saved#security`);
+});
+
+// ── Join Requests: Save Settings (log channel + custom format) ────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/join-requests/settings', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const logChannelId  = req.body.logChannelId  || null;
+  const customFormat  = (req.body.customFormat || '').trim() || null;
+  const current = await getConfigValue({ db }, guildId, 'joinRequests', {});
+  await updateGuildConfig({ db }, guildId, { joinRequests: { ...current, logChannelId, customFormat } });
+  res.redirect(`/dashboard/server/${guildId}?success=Join+request+settings+saved#join-requests`);
 });
