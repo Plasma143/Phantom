@@ -908,34 +908,35 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
           <hr style="border:none; border-top:1px solid #2b2d31; margin:28px 0;" />
 
-          <p style="font-weight:700; margin:0 0 4px; font-size:15px;">&#x1F916; Auto-Rank from Promotion Logs</p>
+          <p style="font-weight:700; margin:0 0 4px; font-size:15px;">🤖 Auto-Rank from Promotion Logs</p>
           <p style="color:#949ba4; font-size:13px; margin:0 0 20px; line-height:1.6;">
             Phantom watches a channel for promotion log messages and automatically applies the rank on Roblox.
             It uses AI to read <strong style="color:#fff;">any format</strong> — no regex, no rigid templates needed.
             You can optionally define a preferred format to share with your rankers.
           </p>
 
+          ${!isPremium ? `<div style="background:#1a0840; border:1px solid #5b21b6; border-radius:10px; padding:24px; text-align:center;"><p style="color:#c084fc; font-size:28px; margin:0 0 8px;">🔒</p><p style="color:#fff; font-weight:700; font-size:16px; margin:0 0 6px;">Premium Feature</p><p style="color:#a78bfa; font-size:13px; margin:0 0 16px;">Upgrade to enable auto-ranking from promotion logs.</p><a href="/upgrade/${guildId}?plan=premium" style="display:inline-block; padding:10px 24px; background:#7c3aed; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; font-weight:600;">Upgrade — $7/mo</a></div>` : `
           <form method="POST" action="/dashboard/server/${guildId}/auto-rank">
             <div style="display:flex; align-items:center; gap:12px; margin-bottom:20px; background:#111214; padding:14px 16px; border-radius:8px; border:1px solid #2b2d31;">
               <input type="checkbox" name="enabled" id="autoRankEnabled" value="1" ${autoRank.enabled ? 'checked' : ''} style="width:16px; height:16px; accent-color:#5865F2; cursor:pointer;" />
               <label for="autoRankEnabled" style="color:#fff; font-size:14px; font-weight:600; cursor:pointer;">Enable auto-ranking</label>
             </div>
 
-            <p style="font-weight:700; margin:0 0 6px; font-size:14px; color:#fff;">&#x1F441; Watch Channel</p>
+            <p style="font-weight:700; margin:0 0 6px; font-size:14px; color:#fff;">👁 Watch Channel</p>
             <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Phantom reads every message here looking for promotion logs.</p>
             <select name="watchChannelId" style="width:100%; ${fieldStyle} margin-bottom:20px;">
               <option value="">-- None --</option>
               ${channelOptions(autoRank.watchChannelId)}
             </select>
 
-            <p style="font-weight:700; margin:0 0 6px; font-size:14px; color:#fff;">&#x1F4CB; Confirmation Log Channel</p>
+            <p style="font-weight:700; margin:0 0 6px; font-size:14px; color:#fff;">📋 Confirmation Log Channel</p>
             <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">After applying a rank, Phantom posts a confirmation here.</p>
             <select name="logChannelId" style="width:100%; ${fieldStyle} margin-bottom:20px;">
               <option value="">-- None --</option>
               ${channelOptions(autoRank.logChannelId)}
             </select>
 
-            <p style="font-weight:700; margin:0 0 6px; font-size:14px; color:#fff;">&#x1F4DD; Custom Log Format <span style="color:#949ba4; font-weight:400;">(optional)</span></p>
+            <p style="font-weight:700; margin:0 0 6px; font-size:14px; color:#fff;">📝 Custom Log Format <span style="color:#949ba4; font-weight:400;">(optional)</span></p>
             <p style="color:#949ba4; font-size:13px; margin:0 0 6px; line-height:1.6;">
               Define how the confirmation message looks. Variables: <code style="background:#2b2d31; padding:2px 5px; border-radius:4px;">{username}</code>
               <code style="background:#2b2d31; padding:2px 5px; border-radius:4px;">{newRank}</code>
@@ -947,6 +948,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
             <button type="submit" style="${buttonStyle}">Save Auto-Rank Settings</button>
           </form>
+          `}
         </div>
 
         <div id="tab-join-requests" style="display:none; ${PANEL}">
