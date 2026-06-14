@@ -258,7 +258,7 @@ class PhantomBot extends Client {
     <a href="#features">Features</a>
     <a href="#pricing">Pricing</a>
     <a href="/dashboard/commands">Commands</a>
-    <a href="https://discord.gg/phantomstudios" target="_blank">Support</a>
+    <a href="https://discord.gg/fYtxnNqGNn" target="_blank">Support</a>
     <a href="/dashboard" class="btn btn-primary" style="padding:8px 18px; font-size:13px;">Dashboard</a>
   </div>
 </nav>
@@ -373,7 +373,7 @@ class PhantomBot extends Client {
   <p>© 2026 Phantom Studios &nbsp;·&nbsp;
     <a href="/dashboard">Dashboard</a>
     <a href="/dashboard/commands">Commands</a>
-    <a href="https://discord.gg/phantomstudios" target="_blank">Support</a>
+    <a href="https://discord.gg/fYtxnNqGNn" target="_blank">Support</a>
     <a href="/tos">Terms of Service</a>
     <a href="/privacy">Privacy Policy</a>
   </p>
@@ -458,7 +458,7 @@ class PhantomBot extends Client {
   <p>We may update these Terms from time to time. Continued use of the Service after changes constitutes acceptance of the updated Terms. We will notify users of significant changes via the Phantom Studios Discord server.</p>
 
   <h2>12. Contact</h2>
-  <p>Questions about these Terms? Join our <a href="https://discord.gg/phantomstudios" target="_blank">support server</a> or open a ticket.</p>
+  <p>Questions about these Terms? Join our <a href="https://discord.gg/fYtxnNqGNn" target="_blank">support server</a> or open a ticket.</p>
 </div>
 <footer class="footer">
   © 2026 Phantom Studios &nbsp;·&nbsp;
@@ -558,7 +558,7 @@ class PhantomBot extends Client {
     <li>Request deletion of your data</li>
     <li>Withdraw consent for data processing</li>
   </ul>
-  <p>To exercise these rights, open a ticket in our <a href="https://discord.gg/phantomstudios" target="_blank">support server</a>.</p>
+  <p>To exercise these rights, open a ticket in our <a href="https://discord.gg/fYtxnNqGNn" target="_blank">support server</a>.</p>
 
   <h2>9. Children's Privacy</h2>
   <p>Phantom is not directed at children under 13. We do not knowingly collect data from children under 13. If you believe we have inadvertently collected such data, please contact us immediately.</p>
@@ -567,7 +567,7 @@ class PhantomBot extends Client {
   <p>We may update this Privacy Policy from time to time. We will notify users of significant changes via the Phantom Studios Discord server. Continued use of the Service constitutes acceptance of the updated policy.</p>
 
   <h2>11. Contact</h2>
-  <p>Questions about this Privacy Policy? Join our <a href="https://discord.gg/phantomstudios" target="_blank">support server</a> or open a ticket.</p>
+  <p>Questions about this Privacy Policy? Join our <a href="https://discord.gg/fYtxnNqGNn" target="_blank">support server</a> or open a ticket.</p>
 </div>
 <footer class="footer">
   © 2026 Phantom Studios &nbsp;·&nbsp;
