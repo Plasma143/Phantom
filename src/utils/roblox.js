@@ -3,9 +3,9 @@
 //
 // Most of these are public read endpoints — no API key needed. The three
 // at the bottom (getGroupRoles, getGroupMembership, updateGroupMemberRank)
-// use Roblox's Open Cloud API and require a ROBLOX_OPEN_CLOUD_API_KEY env
-// var with group:read (+ group:write for updateGroupMemberRank), created by
-// an account that has permission to rank members in that group.
+// use Roblox's Open Cloud API and require an apiKey parameter — each server
+// stores its own key in the DB (set via the dashboard) so multiple servers
+// can bind different groups without sharing credentials.
 
 import { logger } from './logger.js';
 
@@ -118,15 +118,14 @@ export async function getRobloxGroupInfo(groupId) {
   }
 }
 
-// ---- Open Cloud: rank management (requires ROBLOX_OPEN_CLOUD_API_KEY) ----
+// ---- Open Cloud: rank management (apiKey passed in, stored per-guild) ----
 
 /**
  * Get every role in a group via Open Cloud — { id, rank, displayName, ... },
  * sorted by rank (handles pagination internally). Returns null on error
  * (e.g. missing/invalid API key).
  */
-export async function getGroupRoles(groupId) {
-  const apiKey = process.env.ROBLOX_OPEN_CLOUD_API_KEY;
+export async function getGroupRoles(groupId, apiKey) {
   let roles = [];
   let pageToken = '';
 
@@ -157,8 +156,7 @@ export async function getGroupRoles(groupId) {
  * (includes the `path` and `role` needed to update it). Returns null if
  * they're not a member, or on error.
  */
-export async function getGroupMembership(groupId, robloxUserId) {
-  const apiKey = process.env.ROBLOX_OPEN_CLOUD_API_KEY;
+export async function getGroupMembership(groupId, robloxUserId, apiKey) {
   const filter = encodeURIComponent(`user=='users/${robloxUserId}'`);
   const url = `${OPEN_CLOUD_API}/groups/${groupId}/memberships?filter=${filter}`;
 
@@ -184,13 +182,12 @@ export async function getGroupMembership(groupId, robloxUserId) {
  *
  * Returns { success: true } or { success: false, error: '...' }.
  */
-export async function updateGroupMemberRank(groupId, robloxUserId, targetRank) {
-  const apiKey = process.env.ROBLOX_OPEN_CLOUD_API_KEY;
+export async function updateGroupMemberRank(groupId, robloxUserId, targetRank, apiKey) {
 
   try {
     const [membership, roles] = await Promise.all([
-      getGroupMembership(groupId, robloxUserId),
-      getGroupRoles(groupId),
+      getGroupMembership(groupId, robloxUserId, apiKey),
+      getGroupRoles(groupId, apiKey),
     ]);
 
     if (!membership) {
