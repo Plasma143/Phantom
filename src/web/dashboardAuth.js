@@ -5,7 +5,7 @@
 //   /dashboard/login         -> redirects to Discord's OAuth consent screen
 //   /dashboard/auth/callback -> exchanges the code, fetches the user, sets a cookie
 //   /dashboard/logout         -> clears the session cookie
-//   /dashboard                -> shows the servers you can manage with R2-D2
+//   /dashboard                -> shows the servers you can manage with Phantom
 //   /dashboard/server/:id     -> view + edit that server's Roblox setup
 //   /dashboard/commands       -> public list of all slash commands
 //
@@ -24,7 +24,7 @@ import { db } from '../utils/database.js';
 import { pgDb } from '../utils/postgresDatabase.js';
 import { getRobloxGroupInfo, getRobloxUserByUsername, getGroupRoles, getGroupMembership, updateGroupMemberRank } from '../utils/roblox.js';
 
-const PUBLIC_URL = process.env.PUBLIC_URL || 'https://r2-d2-production.up.railway.app';
+const PUBLIC_URL = process.env.PUBLIC_URL || 'https://phantom1.up.railway.app';
 const REDIRECT_URI = `${PUBLIC_URL}/dashboard/auth/callback`;
 
 const CLIENT_ID = process.env.DASHBOARD_CLIENT_ID;
@@ -188,7 +188,7 @@ function renderPage(bodyHtml, user = null) {
     <html>
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>R2-D2 Dashboard</title>
+        <title>Phantom Dashboard</title>
         <style>
           * { box-sizing: border-box; }
           body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
@@ -204,7 +204,7 @@ function renderPage(bodyHtml, user = null) {
       <body style="margin:0; background:#1e1f22; color:#fff; font-size:16px;">
         <div style="background:#2b2d31; padding:14px 24px; display:flex; flex-wrap:wrap; gap:20px; justify-content:space-between; align-items:center; border-bottom:1px solid #1e1f22;">
           <div style="display:flex; align-items:center; gap:20px;">
-            <a href="/dashboard" style="color:#fff; text-decoration:none; font-weight:bold; font-size:18px;">R2-D2 Dashboard</a>
+            <a href="/dashboard" style="color:#fff; text-decoration:none; font-weight:bold; font-size:18px;">Phantom Dashboard</a>
             <a href="/dashboard/commands" style="color:#aaa; text-decoration:none; font-size:14px;">Commands</a>
           </div>
           ${navUser}
@@ -363,7 +363,7 @@ dashboardAuthRouter.get('/dashboard/logout', (req, res) => {
   res.redirect('/dashboard');
 });
 
-// Public: list every slash command R2-D2 offers.
+// Public: list every slash command Phantom offers.
 dashboardAuthRouter.get('/dashboard/commands', async (req, res) => {
   // Best-effort login lookup, just to keep the nav consistent. Not required.
   let user = null;
@@ -388,7 +388,7 @@ dashboardAuthRouter.get('/dashboard/commands', async (req, res) => {
 
     const body = `
       <h2 style="margin-top:0;">Commands</h2>
-      <p style="color:#aaa; margin-bottom:24px;">Here's everything R2-D2 can do. Commands marked <span style="background:#444; color:#aaa; font-size:11px; padding:2px 6px; border-radius:4px;">Admin</span> require server management permissions.</p>
+      <p style="color:#aaa; margin-bottom:24px;">Here's everything Phantom can do. Commands marked <span style="background:#444; color:#aaa; font-size:11px; padding:2px 6px; border-radius:4px;">Admin</span> require server management permissions.</p>
 
       <div style="max-width:640px; margin:0 auto 24px; text-align:left; background:#2b2d31; padding:16px; border-radius:8px;">
         <p style="margin:0;"><strong>Setting up Roblox verification?</strong> Server admins can configure this from the <a href="/dashboard" style="color:#5865F2;">dashboard</a>.</p>
@@ -404,7 +404,7 @@ dashboardAuthRouter.get('/dashboard/commands', async (req, res) => {
   }
 });
 
-// Step 3: show the servers this user can manage with R2-D2.
+// Step 3: show the servers this user can manage with Phantom.
 dashboardAuthRouter.get('/dashboard', async (req, res) => {
   const token = getCookie(req, 'dashboard_token');
 
@@ -439,7 +439,7 @@ dashboardAuthRouter.get('/dashboard', async (req, res) => {
 
     let body;
     if (manageable.length === 0) {
-      body = `<p style="margin-top:12px; color:#aaa;">No servers found where you have <strong>Manage Server</strong> permission and R2-D2 is present.</p>`;
+      body = `<p style="margin-top:12px; color:#aaa;">No servers found where you have <strong>Manage Server</strong> permission and Phantom is present.</p>`;
     } else {
       const items = manageable
         .map(
