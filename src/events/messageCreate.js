@@ -6,6 +6,7 @@ import { checkRateLimit } from '../utils/rateLimiter.js';
 import { getConfigValue } from '../services/guildConfig.js';
 import { getRobloxUserByUsername, getGroupRoles, updateGroupMemberRank } from '../utils/roblox.js';
 import { parsePromotionLog, applyFormat, DEFAULT_LOG_FORMAT } from '../services/promotionParser.js';
+import { db } from '../utils/database.js';
 
 const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
 const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
@@ -114,6 +115,17 @@ async function handleAutoRank(message, client) {
     }
 
     logger.info(`[autoRank] ${robloxUser.name} → ${targetRole.displayName} in ${message.guild.name}`);
+
+    // Save to rank history for enterprise servers
+    const histEntry = {
+      username: robloxUser.name,
+      oldRank: parsed.oldRank || null,
+      newRank: targetRole.displayName,
+      ranker: parsed.ranker || message.author.username,
+      reason: parsed.reason || null,
+      ts: Date.now(),
+    };
+    await db.set(`rank_history:${message.guild.id}:${histEntry.ts}:${Math.random().toString(36).slice(2)}`, histEntry).catch(() => {});
   } catch (err) {
     logger.error('handleAutoRank error:', err);
   }
