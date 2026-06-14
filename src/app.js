@@ -191,11 +191,194 @@ class PhantomBot extends Client {
     });
 
     app.get('/', (req, res) => {
-      res.status(200).json({ 
-        message: 'PhantomBot System Online',
-        version: '2.0.0',
-        timestamp: new Date().toISOString()
-      });
+      const INVITE_URL = `https://discord.com/oauth2/authorize?client_id=${process.env.CLIENT_ID || '1515029322061054063'}&permissions=8&scope=bot+applications.commands`;
+      res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Phantom — Roblox Group Management for Discord</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0f; color: #e8e0ff; line-height: 1.6; }
+    a { color: inherit; text-decoration: none; }
+    .nav { display: flex; align-items: center; justify-content: space-between; padding: 18px 48px; background: rgba(10,10,15,0.95); border-bottom: 1px solid #1e1040; position: sticky; top: 0; z-index: 100; backdrop-filter: blur(10px); }
+    .nav-logo { font-size: 22px; font-weight: 800; color: #c084fc; letter-spacing: -0.5px; }
+    .nav-links { display: flex; align-items: center; gap: 24px; }
+    .nav-links a { color: #a78bfa; font-size: 14px; font-weight: 500; transition: color 0.15s; }
+    .nav-links a:hover { color: #fff; }
+    .btn { display: inline-block; padding: 12px 28px; border-radius: 10px; font-weight: 700; font-size: 15px; transition: opacity 0.15s, transform 0.1s; cursor: pointer; border: none; }
+    .btn:hover { opacity: 0.88; transform: translateY(-1px); }
+    .btn-primary { background: #7c3aed; color: #fff; }
+    .btn-secondary { background: transparent; color: #c084fc; border: 1px solid #5b21b6; }
+    .hero { text-align: center; padding: 100px 24px 80px; max-width: 800px; margin: 0 auto; }
+    .hero-badge { display: inline-block; background: #1a0840; color: #a78bfa; border: 1px solid #3b1fa8; border-radius: 99px; padding: 6px 16px; font-size: 13px; font-weight: 600; margin-bottom: 28px; }
+    .hero h1 { font-size: clamp(40px, 7vw, 72px); font-weight: 900; line-height: 1.05; letter-spacing: -2px; margin-bottom: 24px; background: linear-gradient(135deg, #e8e0ff 0%, #c084fc 50%, #7c3aed 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .hero p { font-size: 20px; color: #a78bfa; margin-bottom: 40px; max-width: 560px; margin-left: auto; margin-right: auto; }
+    .hero-buttons { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+    .features { padding: 80px 24px; max-width: 1100px; margin: 0 auto; }
+    .features h2 { text-align: center; font-size: 36px; font-weight: 800; margin-bottom: 16px; color: #fff; }
+    .features-sub { text-align: center; color: #a78bfa; margin-bottom: 56px; font-size: 17px; }
+    .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+    .feature-card { background: #0d0820; border: 1px solid #2d1b69; border-radius: 16px; padding: 28px; transition: border-color 0.2s, transform 0.2s; }
+    .feature-card:hover { border-color: #7c3aed; transform: translateY(-3px); }
+    .feature-icon { font-size: 32px; margin-bottom: 16px; }
+    .feature-card h3 { font-size: 18px; font-weight: 700; color: #fff; margin-bottom: 10px; }
+    .feature-card p { color: #8b7db5; font-size: 14px; line-height: 1.7; }
+    .pricing { padding: 80px 24px; background: #05030f; }
+    .pricing h2 { text-align: center; font-size: 36px; font-weight: 800; margin-bottom: 16px; color: #fff; }
+    .pricing-sub { text-align: center; color: #a78bfa; margin-bottom: 56px; font-size: 17px; }
+    .pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; max-width: 900px; margin: 0 auto; }
+    .pricing-card { background: #0d0820; border: 1px solid #2d1b69; border-radius: 16px; padding: 36px 32px; text-align: center; position: relative; }
+    .pricing-card.featured { border-color: #7c3aed; background: #1a0840; }
+    .pricing-badge { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: #7c3aed; color: #fff; font-size: 12px; font-weight: 700; padding: 4px 16px; border-radius: 99px; white-space: nowrap; }
+    .pricing-card h3 { font-size: 20px; font-weight: 800; color: #fff; margin-bottom: 8px; }
+    .pricing-price { font-size: 42px; font-weight: 900; color: #c084fc; margin: 16px 0 4px; }
+    .pricing-price span { font-size: 16px; color: #8b7db5; font-weight: 400; }
+    .pricing-features { list-style: none; margin: 24px 0 32px; text-align: left; }
+    .pricing-features li { color: #a78bfa; font-size: 14px; padding: 6px 0; border-bottom: 1px solid #1e1040; display: flex; align-items: center; gap: 10px; }
+    .pricing-features li::before { content: "✓"; color: #7c3aed; font-weight: 800; flex-shrink: 0; }
+    .cta { text-align: center; padding: 80px 24px; }
+    .cta h2 { font-size: 36px; font-weight: 800; color: #fff; margin-bottom: 16px; }
+    .cta p { color: #a78bfa; font-size: 17px; margin-bottom: 36px; }
+    .footer { text-align: center; padding: 32px 24px; border-top: 1px solid #1e1040; color: #5b4fa0; font-size: 13px; }
+    .footer a { color: #7c3aed; margin: 0 12px; }
+    .stat-strip { display: flex; justify-content: center; gap: 48px; flex-wrap: wrap; padding: 48px 24px; border-top: 1px solid #1e1040; border-bottom: 1px solid #1e1040; }
+    .stat { text-align: center; }
+    .stat-number { font-size: 36px; font-weight: 900; color: #c084fc; }
+    .stat-label { font-size: 13px; color: #8b7db5; margin-top: 4px; }
+    @media (max-width: 600px) { .nav { padding: 14px 20px; } .nav-links { gap: 14px; } }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-logo">👻 Phantom</div>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#pricing">Pricing</a>
+    <a href="/dashboard/commands">Commands</a>
+    <a href="https://discord.gg/phantomstudios" target="_blank">Support</a>
+    <a href="/dashboard" class="btn btn-primary" style="padding:8px 18px; font-size:13px;">Dashboard</a>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="hero-badge">⚡ Built for Roblox communities</div>
+  <h1>The smarter way to manage your Roblox group</h1>
+  <p>Phantom connects your Discord server to your Roblox group — verification, role sync, rank management, and more, all from one dashboard.</p>
+  <div class="hero-buttons">
+    <a href="${INVITE_URL}" class="btn btn-primary">➕ Add to Server — Free</a>
+    <a href="/dashboard" class="btn btn-secondary">View Dashboard</a>
+  </div>
+</section>
+
+<div class="stat-strip">
+  <div class="stat"><div class="stat-number">100+</div><div class="stat-label">Commands</div></div>
+  <div class="stat"><div class="stat-number">3</div><div class="stat-label">Seconds to link</div></div>
+  <div class="stat"><div class="stat-number">0</div><div class="stat-label">Extra apps needed</div></div>
+  <div class="stat"><div class="stat-number">24/7</div><div class="stat-label">Uptime</div></div>
+</div>
+
+<section class="features" id="features">
+  <h2>Everything your group needs</h2>
+  <p class="features-sub">Phantom replaces the clutter of multiple bots with one powerful system.</p>
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="feature-icon">🔗</div>
+      <h3>Roblox Account Linking</h3>
+      <p>Members link their Roblox account via bio-code or OAuth "Sign in with Roblox". Fast, secure, no third-party apps.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🏅</div>
+      <h3>Automatic Role Sync</h3>
+      <p>Discord roles update automatically based on Roblox group rank. One click to auto-bind all your existing roles.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">👑</div>
+      <h3>Dashboard Rank Management</h3>
+      <p>Look up any member and change their Roblox group rank directly from the web dashboard — no more logging into Roblox.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">⚡</div>
+      <h3>AI-Free Auto-Ranking</h3>
+      <p>Phantom watches your promotion log channel and automatically applies ranks — any format, zero API costs.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📋</div>
+      <h3>Audit Logs</h3>
+      <p>Every join, leave, ban, rank change and dashboard action logged automatically to your chosen channels.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🌐</div>
+      <h3>Web Dashboard</h3>
+      <p>A full admin dashboard with 7 tabs — overview, group setup, rank management, audit logs, members, documents and verification.</p>
+    </div>
+  </div>
+</section>
+
+<section class="pricing" id="pricing">
+  <h2>Simple, honest pricing</h2>
+  <p class="pricing-sub">Start free. Upgrade when you need more.</p>
+  <div class="pricing-grid">
+    <div class="pricing-card">
+      <h3>Free</h3>
+      <div class="pricing-price">A$0<span>/mo</span></div>
+      <ul class="pricing-features">
+        <li>Roblox account linking</li>
+        <li>Automatic role sync</li>
+        <li>Group Setup dashboard</li>
+        <li>Verification panel</li>
+        <li>100+ bot commands</li>
+      </ul>
+      <a href="${INVITE_URL}" class="btn btn-secondary" style="width:100%; display:block;">Add to Server</a>
+    </div>
+    <div class="pricing-card featured">
+      <div class="pricing-badge">Most Popular</div>
+      <h3>Premium</h3>
+      <div class="pricing-price">A$7<span>/mo</span></div>
+      <ul class="pricing-features">
+        <li>Everything in Free</li>
+        <li>Rank Management dashboard</li>
+        <li>Auto-rank from promotion logs</li>
+        <li>Live member rank display</li>
+        <li>Audit log posting</li>
+        <li>Documents tab</li>
+        <li>Priority support</li>
+      </ul>
+      <a href="/dashboard" class="btn btn-primary" style="width:100%; display:block;">Get Started</a>
+    </div>
+    <div class="pricing-card">
+      <h3>Enterprise</h3>
+      <div class="pricing-price">A$15<span>/mo</span></div>
+      <ul class="pricing-features">
+        <li>Everything in Premium</li>
+        <li>Multiple group bindings</li>
+        <li>Custom bot branding</li>
+        <li>Analytics dashboard</li>
+        <li>Dedicated support</li>
+      </ul>
+      <a href="/dashboard" class="btn btn-secondary" style="width:100%; display:block;">Get Started</a>
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <h2>Ready to upgrade your Roblox community?</h2>
+  <p>Join for free — no credit card required.</p>
+  <a href="${INVITE_URL}" class="btn btn-primary" style="font-size:17px; padding:16px 40px;">➕ Add Phantom to Discord</a>
+</section>
+
+<footer class="footer">
+  <p>© 2026 Phantom Studios &nbsp;·&nbsp;
+    <a href="/dashboard">Dashboard</a>
+    <a href="/dashboard/commands">Commands</a>
+    <a href="https://discord.gg/phantomstudios" target="_blank">Support</a>
+  </p>
+</footer>
+
+</body>
+</html>`);
     });
 
     const startServer = (port, attempt = 0) => {
