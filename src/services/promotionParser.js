@@ -1,77 +1,139 @@
 // src/services/promotionParser.js
 //
-// Uses Claude to extract promotion information from ANY log format.
-// Works on plain text, embeds converted to text, custom formats — anything.
+// Pattern-based promotion log parser — no AI, no API calls, no cost.
+// Parses any promotion log format by looking for common field labels.
 //
 // Returns: { username, newRank, reason, ranker } on success
 //          { error: '...' } if the message isn't a valid promotion log
 
 import { logger } from '../utils/logger.js';
 
-const SYSTEM_PROMPT = `You extract Roblox group promotion information from log messages.
-Your job is to identify:
-1. The Roblox username of the person BEING promoted (not the person doing the ranking)
-2. Their NEW rank (not their old rank — if both old and new are shown, pick the new one)
-3. The reason for the promotion (if mentioned)
-4. The name of the person who did the ranking (if mentioned)
+/**
+ * Parse a promotion log message.
+ * If customFormat is provided (the template saved in the dashboard),
+ * we use that to know exactly which label precedes each field.
+ * Otherwise we fall back to generic pattern matching.
+ */
+export function parsePromotionLog(messageContent, customFormat = null) {
+  if (!messageContent?.trim()) return { error: 'Empty message' };
 
-Return ONLY valid JSON. No extra text, no markdown, no explanation.`;
+  // Strip Discord bold/italic markers and clean up
+  const clean = messageContent.replace(/\*\*/g, '').replace(/\*/g, '').trim();
+  const lines = clean.split('\n').map((l) => l.trim()).filter(Boolean);
 
-const USER_PROMPT = (content) => `Extract promotion info from this log message.
-
-Return exactly one of these:
-{"username": "RobloxUsername", "newRank": "New Rank Name", "reason": "reason text or null", "ranker": "ranker name or null"}
-{"error": "brief reason this is not a valid promotion log"}
-
-Examples of valid promotion logs:
-- "Username: @JG | darth_killerGRW\\nPerson ranked: SamTrunGRW\\nFrom: staff sergeant\\nTo: master sergeant\\nReason: attended SSU" → username: SamTrunGRW, newRank: master sergeant
-- "Promoted: Aspect\\nRank: FS -> Elder\\nReason: Retired" → username: Aspect, newRank: Elder
-- "Username: @daboss\\nPrevious Rank: Force Sensitive\\nNew rank: Jedi Sentinel\\nReason: Handpicked" → username: daboss (or whoever is listed as the one being promoted), newRank: Jedi Sentinel
-
-The message to parse:
-${content}`;
-
-export async function parsePromotionLog(messageContent) {
-  if (!messageContent || messageContent.trim().length < 5) {
-    return { error: 'Message too short' };
-  }
-
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 200,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: USER_PROMPT(messageContent) }],
-      }),
-    });
-
-    if (!response.ok) {
-      logger.error('promotionParser: Claude API error', response.status);
-      return { error: `API error ${response.status}` };
+  // Try template-based parsing first (exact label matching from dashboard format)
+  if (customFormat) {
+    const result = parseWithTemplate(clean, customFormat);
+    if (result.username && result.newRank) {
+      logger.debug('[promotionParser] Parsed via template');
+      return result;
     }
-
-    const data = await response.json();
-    const text = data.content?.[0]?.text?.trim() || '';
-
-    const parsed = JSON.parse(text);
-    return parsed;
-  } catch (err) {
-    logger.error('promotionParser: parse failed', err.message);
-    return { error: `Parse failed: ${err.message}` };
   }
+
+  // Fall back to generic pattern matching
+  const result = parseGeneric(lines);
+  if (result.username && result.newRank) {
+    logger.debug('[promotionParser] Parsed via generic patterns');
+    return result;
+  }
+
+  return { error: 'Could not identify username or new rank' };
 }
 
-// Apply a custom format template string, substituting variables.
+// ---- Template-based parsing ----
+// Reads the field labels straight from the dashboard's custom format string
+// e.g. "**Ranked by:** {ranker}\n**User:** {username}\n**New Rank:** {newRank}"
+// becomes: look for "Ranked by:" → capture ranker, "User:" → capture username, etc.
+
+function parseWithTemplate(content, template) {
+  const cleanTemplate = template.replace(/\*\*/g, '').replace(/\*/g, '');
+  const result = {};
+
+  for (const variable of ['username', 'newRank', 'reason', 'ranker']) {
+    const placeholder = `{${variable}}`;
+    const idx = cleanTemplate.indexOf(placeholder);
+    if (idx === -1) continue;
+
+    // Get the label: everything on the same line before the placeholder
+    const lineStart = cleanTemplate.lastIndexOf('\n', idx) + 1;
+    const label = cleanTemplate.slice(lineStart, idx).trim();
+    if (!label) continue;
+
+    // Find that label in the actual message and grab what comes after it
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = content.match(new RegExp(escaped + '\\s*(.+)', 'i'));
+    if (match) result[variable] = match[1].trim();
+  }
+
+  return result;
+}
+
+// ---- Generic pattern matching ----
+// Handles all common promotion log formats without AI
+
+function parseGeneric(lines) {
+  const result = {};
+  const fullText = lines.join('\n');
+  const hasNewRankLine = lines.some((l) => /^new\s*rank[\s:]/i.test(l));
+
+  for (const line of lines) {
+    // ── Username ──
+    // "Person ranked:", "Username:", "User:", "Promoted:", "Member:", "Rank:" (only if "New Rank:" also exists)
+    if (!result.username) {
+      const m =
+        line.match(/^(?:person\s*ranked|username|user|promoted|member)[\s:]+(.+)/i) ||
+        (hasNewRankLine && line.match(/^(?:rank)[\s:]+(.+)/i));
+      if (m) {
+        // Strip @mentions and pipe-separated prefixes — take the last clean token
+        result.username = m[1]
+          .replace(/^.*\|\s*/, '')  // "JG | darth_killerGRW" → "darth_killerGRW"
+          .replace(/^@/, '')         // "@Username" → "Username"
+          .trim();
+      }
+    }
+
+    // ── New rank ──
+    // "New Rank:", "To:", or arrow formats "FS -> Elder" / "FS → Elder"
+    if (!result.newRank) {
+      const m =
+        line.match(/^(?:new\s*rank|to)[\s:]+(.+)/i) ||
+        line.match(/(?:→|->|=>)\s*(.+)/);        // arrow notation
+      if (m) result.newRank = m[1].trim();
+    }
+
+    // ── Reason ──
+    if (!result.reason) {
+      const m = line.match(/^reason[\s:]+(.+)/i);
+      if (m) result.reason = m[1].trim();
+    }
+
+    // ── Ranker ──
+    if (!result.ranker) {
+      const m = line.match(/^(?:ranked\s*by|by|promoter|ranker)[\s:]+(.+)/i);
+      if (m) result.ranker = m[1].replace(/^@/, '').trim();
+    }
+  }
+
+  // Handle "Rank: OldRank -> NewRank" on a single line (e.g. "Rank: FS -> Elder")
+  if (!result.newRank) {
+    const arrowLine = lines.find((l) => /(?:→|->|=>)/.test(l));
+    if (arrowLine) {
+      const m = arrowLine.match(/(?:→|->|=>)\s*(.+)/);
+      if (m) result.newRank = m[1].trim();
+    }
+  }
+
+  return result;
+}
+
+// Apply a custom format template, substituting variables.
 // Variables: {username} {newRank} {reason} {ranker}
 export function applyFormat(template, vars) {
   return template
     .replace(/\{username\}/gi, vars.username || 'Unknown')
-    .replace(/\{newRank\}/gi, vars.newRank || 'Unknown')
-    .replace(/\{reason\}/gi, vars.reason || 'No reason given')
-    .replace(/\{ranker\}/gi, vars.ranker || 'Unknown');
+    .replace(/\{newRank\}/gi,  vars.newRank  || 'Unknown')
+    .replace(/\{reason\}/gi,   vars.reason   || 'No reason given')
+    .replace(/\{ranker\}/gi,   vars.ranker   || 'Unknown');
 }
 
 export const DEFAULT_LOG_FORMAT =
