@@ -1103,7 +1103,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
         </div>
 
         <script>
-          var ALL_TABS=['group-setup','rank-management','audit-logs','members','documents','verification','join-requests'];
+          var ALL_TABS=['overview','group-setup','rank-management','audit-logs','members','documents','verification','join-requests'];
           function showTab(name,btn){
             ALL_TABS.forEach(function(t){
               document.getElementById('tab-'+t).style.display='none';
