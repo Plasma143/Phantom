@@ -690,9 +690,12 @@ class PhantomBot extends Client {
 
   async registerCommands() {
     try {
-      await registerSlashCommands(this, this.config.bot.guildId);
+      // Global registration is handled in the ready event (ready.js)
+      // where client.application is available. Guild-specific registration
+      // is skipped to prevent duplicate commands appearing in servers.
+      logger.info('Command registration deferred to ready event (global only).');
     } catch (error) {
-      logger.error('Error registering commands:', error);
+      logger.error('Error in registerCommands:', error);
     }
   }
 
