@@ -211,19 +211,25 @@ export async function handleRobloxConfirmButton(interaction, client) {
     await syncRobloxRoles(interaction.member, pending.robloxId);
     await interaction.member.setNickname(pending.robloxUsername).catch(() => {});
 
-    // Auto-accept pending group join request if the server has a group configured
+    // Auto-accept pending group join request — Premium only
     try {
       const robloxConfig = await getConfigValue({ db }, interaction.guildId, 'roblox', {});
       if (robloxConfig.groupId && robloxConfig.openCloudKey) {
-        await acceptGroupJoinRequest(robloxConfig.groupId, pending.robloxId, robloxConfig.openCloudKey);
-        logger.info('Auto-accepted group join request on verify', {
-          robloxId: pending.robloxId,
-          groupId: robloxConfig.groupId,
-          guildId: interaction.guildId,
-        });
+        // Check if this guild has premium
+        const { getSubscription, getTier } = await import('../web/stripePayments.js');
+        const sub  = await getSubscription(interaction.guildId);
+        const tier = getTier(sub);
+        const isPremium = tier === 'premium' || tier === 'enterprise';
+        if (isPremium) {
+          await acceptGroupJoinRequest(robloxConfig.groupId, pending.robloxId, robloxConfig.openCloudKey);
+          logger.info('Auto-accepted group join request on verify', {
+            robloxId: pending.robloxId,
+            groupId: robloxConfig.groupId,
+            guildId: interaction.guildId,
+          });
+        }
       }
     } catch (e) {
-      // Silent fail — user may not have a pending request, which is normal
       logger.debug('Auto-accept join request skipped:', e.message);
     }
 
