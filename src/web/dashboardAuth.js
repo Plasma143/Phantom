@@ -932,7 +932,6 @@ dashboardAuthRouter.get('/dashboard/server/:guildId/create-log-channels', async 
     res.redirect(`/dashboard/server/${guildId}?error=Something+went+wrong+creating+channels#audit-logs`);
   }
 });
-});
 
 dashboardAuthRouter.post('/dashboard/server/:guildId/rank-lookup', async (req, res) => {
   const { guildId } = req.params;
