@@ -8,6 +8,50 @@ import { getServerCounters, updateCounter } from '../services/serverstatsService
 import { setBirthday as dbSetBirthday } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
 import { postAuditLog, timeAgo } from '../services/phantomAudit.js';
+import { pgDb } from '../utils/postgresDatabase.js';
+
+// ── Raid tracking (in-memory, per guild) ─────────────────────────────────────
+const raidJoinLog = new Map(); // guildId → [timestamp, ...]
+
+async function getSecurityConfig(guildId) {
+  const data = await pgDb.get(`security:${guildId}`);
+  return {
+    enabled: true, minAccountAgeDays: 0, newAccountAction: 'none',
+    newAccountRoleId: null, newAccountLogChannel: null,
+    raidProtection: false, raidThreshold: 10, raidWindowSeconds: 30,
+    raidAction: 'lockdown', lockdownActive: false,
+    ...(data || {}),
+  };
+}
+
+async function logSecurityEvent(guild, config, embed) {
+  if (!config.newAccountLogChannel) return;
+  const ch = guild.channels.cache.get(config.newAccountLogChannel);
+  if (ch) await ch.send({ embeds: [embed] }).catch(() => {});
+}
+
+async function handleRaid(guild, config) {
+  if (config.lockdownActive) return; // already locked down
+  await pgDb.set(`security:${guild.id}`, { ...config, lockdownActive: true });
+
+  const everyoneRole = guild.roles.everyone;
+  const textChannels = guild.channels.cache.filter(c => c.type === 0);
+  for (const [, ch] of textChannels) {
+    await ch.permissionOverwrites.edit(everyoneRole, { SendMessages: false }).catch(() => {});
+  }
+
+  const logCh = config.newAccountLogChannel && guild.channels.cache.get(config.newAccountLogChannel);
+  if (logCh) {
+    await logCh.send({
+      embeds: [new EmbedBuilder()
+        .setColor(0xed4245)
+        .setTitle('🚨 Raid Detected — Server Locked Down')
+        .setDescription(`Suspicious join pattern detected. Use \`/security lockdown disable\` to unlock.`)
+        .setTimestamp()],
+    }).catch(() => {});
+  }
+}
+
 
 export default {
   name: Events.GuildMemberAdd,
@@ -18,6 +62,56 @@ export default {
         const { guild, user } = member;
         
         const config = await getGuildConfig(member.client, guild.id);
+
+        // ── Security checks ──────────────────────────────────────────────────
+        try {
+          const sec = await getSecurityConfig(guild.id);
+
+          // Raid detection
+          if (sec.raidProtection) {
+            const now = Date.now();
+            const joins = raidJoinLog.get(guild.id) || [];
+            joins.push(now);
+            const recent = joins.filter(t => now - t < sec.raidWindowSeconds * 1000);
+            raidJoinLog.set(guild.id, recent);
+            if (recent.length >= sec.raidThreshold) {
+              await handleRaid(guild, sec);
+            }
+          }
+
+          // Account age check
+          if (sec.minAccountAgeDays > 0) {
+            const ageDays = Math.floor((Date.now() - user.createdTimestamp) / 86400000);
+            if (ageDays < sec.minAccountAgeDays) {
+              const actionEmbed = new EmbedBuilder()
+                .setColor(0xf59e0b)
+                .setTitle('⚠️ New Account Flagged')
+                .addFields(
+                  { name: 'User',        value: `${user.tag} (${user.id})`, inline: true },
+                  { name: 'Account Age', value: `${ageDays} day${ageDays !== 1 ? 's' : ''}`, inline: true },
+                  { name: 'Required',    value: `${sec.minAccountAgeDays} days`, inline: true },
+                  { name: 'Action',      value: sec.newAccountAction, inline: true },
+                )
+                .setTimestamp();
+              await logSecurityEvent(guild, sec, actionEmbed);
+
+              if (sec.newAccountAction === 'warn') {
+                await user.send(`⚠️ Your account is too new to join **${guild.name}**. Required age: ${sec.minAccountAgeDays} days.`).catch(() => {});
+              } else if (sec.newAccountAction === 'kick') {
+                await member.kick(`Account too new (${ageDays}d < ${sec.minAccountAgeDays}d)`).catch(() => {});
+                return;
+              } else if (sec.newAccountAction === 'ban') {
+                await member.ban({ reason: `Account too new (${ageDays}d < ${sec.minAccountAgeDays}d)` }).catch(() => {});
+                return;
+              } else if (sec.newAccountAction === 'role' && sec.newAccountRoleId) {
+                await member.roles.add(sec.newAccountRoleId).catch(() => {});
+              }
+            }
+          }
+        } catch (secErr) {
+          logger.debug('Security check error:', secErr.message);
+        }
+        // ────────────────────────────────────────────────────────────────────
         
         const welcomeConfig = await getWelcomeConfig(member.client, guild.id);
         
