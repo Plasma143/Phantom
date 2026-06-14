@@ -202,26 +202,57 @@ export default {
       if (!voiceChannel) {
         return interaction.editReply({ embeds: [errEmbed('Join a voice channel first.')] });
       }
+
       const player = useMainPlayer();
+
+      // Create or reuse the queue for this guild
+      const queue = player.nodes.create(interaction.guild, {
+        metadata: { channel: interaction.channel },
+        selfDeaf: true,
+        volume: 80,
+        leaveOnEmpty: true,
+        leaveOnEmptyCooldown: 30000,
+        leaveOnEnd: true,
+        leaveOnEndCooldown: 30000,
+      });
+
+      // Connect to voice if not already connected
+      if (!queue.connection) {
+        try {
+          await queue.connect(voiceChannel);
+        } catch {
+          queue.delete();
+          return interaction.editReply({ embeds: [errEmbed("Couldn't join your voice channel.")] });
+        }
+      }
+
+      // Search and queue each song with a per-song timeout
       let queued = 0;
       for (const song of songs) {
         try {
-          await player.play(voiceChannel, song, {
-            nodeOptions: {
-              metadata: { channel: interaction.channel },
-              selfDeaf: true,
-              volume: 80,
-              leaveOnEmpty: true,
-              leaveOnEmptyCooldown: 30000,
-              leaveOnEnd: true,
-              leaveOnEndCooldown: 30000,
-            },
-          });
-          queued++;
+          const result = await Promise.race([
+            player.search(song, { requestedBy: interaction.user }),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
+          ]);
+          if (result?.hasTracks()) {
+            queue.addTrack(result.tracks[0]);
+            queued++;
+          }
         } catch {
-          // Skip songs that can't be found
+          // Skip songs that can't be found or time out
         }
       }
+
+      if (queued === 0) {
+        queue.delete();
+        return interaction.editReply({ embeds: [errEmbed("Couldn't find any songs from this playlist.")] });
+      }
+
+      // Start playing if not already
+      if (!queue.isPlaying()) {
+        await queue.node.play();
+      }
+
       return interaction.editReply({
         embeds: [new EmbedBuilder()
           .setColor(0x7c3aed)
