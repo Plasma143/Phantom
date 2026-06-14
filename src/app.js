@@ -674,6 +674,72 @@ class PhantomBot extends Client {
     cron.schedule('0 6 * * *', () => checkBirthdays(this));
     cron.schedule('* * * * *', () => checkGiveaways(this));
     cron.schedule('*/15 * * * *', () => this.updateAllCounters());
+    // Enterprise scheduled rank sync — runs every hour, each guild opts in per their interval
+    cron.schedule('0 * * * *', () => this.runScheduledRankSync());
+  }
+
+  async runScheduledRankSync() {
+    try {
+      const { pgDb, getConfigValue, updateGuildConfig } = await import('./utils/database.js');
+      const { getGroupRoles, getGroupMembership, updateGroupMemberRank } = await import('./utils/roblox.js');
+      const { getSubscription, getTier, isOwner: _isOwner } = await import('./web/stripePayments.js');
+
+      for (const [guildId, guild] of this.guilds.cache) {
+        try {
+          const enterprise = await getConfigValue({ db: this.db }, guildId, 'enterprise', {});
+          if (!enterprise.syncEnabled) continue;
+
+          // Check enterprise tier
+          const sub  = await getSubscription(guildId);
+          const tier = getTier(sub);
+          if (tier !== 'enterprise') continue;
+
+          // Check if enough time has passed since last sync
+          const intervalMs = (enterprise.syncInterval || 24) * 60 * 60 * 1000;
+          if (enterprise.lastSync && Date.now() - enterprise.lastSync < intervalMs) continue;
+
+          const roblox = await getConfigValue({ db: this.db }, guildId, 'roblox', {});
+          if (!roblox.groupId || !roblox.openCloudKey) continue;
+
+          const linkedKeys = await pgDb.list('roblox_link:');
+          const roles = await getGroupRoles(roblox.groupId, roblox.openCloudKey);
+          let synced = 0, failed = 0;
+
+          for (const key of linkedKeys) {
+            const discordId = key.replace('roblox_link:', '');
+            const member = await guild.members.fetch(discordId).catch(() => null);
+            if (!member) continue;
+            const link = await pgDb.get(key);
+            if (!link?.robloxId) continue;
+
+            try {
+              const membership = await getGroupMembership(roblox.groupId, link.robloxId, roblox.openCloudKey);
+              if (!membership) continue;
+              const currentRank = Number(membership.role?.split('/').pop()) || 0;
+              const rankRoles = roblox.rankRoles || {};
+              const allRankRoleIds = Object.values(rankRoles);
+              await member.roles.remove(member.roles.cache.filter(r => allRankRoleIds.includes(r.id)).map(r => r.id)).catch(() => {});
+              const roleId = rankRoles[currentRank];
+              if (roleId) await member.roles.add(roleId).catch(() => {});
+              synced++;
+            } catch { failed++; }
+          }
+
+          // Update last sync time and log
+          await updateGuildConfig({ db: this.db }, guildId, { enterprise: { ...enterprise, lastSync: Date.now() } });
+
+          if (enterprise.syncLogChannelId) {
+            const ch = guild.channels.cache.get(enterprise.syncLogChannelId);
+            if (ch) await ch.send(`🔄 **Scheduled rank sync complete** — ${synced} members synced${failed ? `, ${failed} failed` : ''}.`).catch(() => {});
+          }
+          logger.info(`[rankSync] Guild ${guildId}: ${synced} synced, ${failed} failed`);
+        } catch (e) {
+          logger.error(`[rankSync] Guild ${guildId} error:`, e.message);
+        }
+      }
+    } catch (e) {
+      logger.error('[rankSync] Fatal error:', e.message);
+    }
   }
 
   async updateAllCounters() {
