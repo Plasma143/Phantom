@@ -1,4 +1,4 @@
-import { Events } from "discord.js";
+import { Events, REST, Routes } from "discord.js";
 import { logger, startupLog } from "../utils/logger.js";
 import config from "../config/application.js";
 import { reconcileReactionRoleMessages } from "../services/reactionRoleService.js";
@@ -30,12 +30,16 @@ export default {
       }
       startupLog('✅ Cleared guild-specific commands (using global only)');
 
-      // Register globally — appears in every server, no duplicates
+      // Register globally using REST API directly — more reliable than client.application.commands.set()
       try {
-        await client.application.commands.set(commands);
+        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+        await rest.put(
+          Routes.applicationCommands(process.env.CLIENT_ID),
+          { body: commands }
+        );
         startupLog(`✅ Registered ${commands.length} commands globally`);
       } catch (err) {
-        logger.error('Global command registration failed:', err.message);
+        logger.error('Global command registration failed:', err?.message || String(err));
       }
 
       const reconciliationSummary = await reconcileReactionRoleMessages(client);
