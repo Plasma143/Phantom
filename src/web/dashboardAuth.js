@@ -477,7 +477,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
     const { guild, user } = access;
 
-    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification, autoRank, subscription, boostDiscount] = await Promise.all([
+    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification, autoRank, enterprise, subscription, boostDiscount] = await Promise.all([
       fetch(`https://discord.com/api/guilds/${guildId}/roles`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       fetch(`https://discord.com/api/guilds/${guildId}/channels`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       fetch(`https://discord.com/api/guilds/${guildId}/members?limit=1000`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
@@ -485,6 +485,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
       getConfigValue({ db }, guildId, 'auditLogs', {}),
       getConfigValue({ db }, guildId, 'verification', {}),
       getConfigValue({ db }, guildId, 'autoRank', {}),
+      getConfigValue({ db }, guildId, 'enterprise', {}),
       getSubscription(guildId),
       getBoostDiscount(user.id),
     ]);
@@ -518,9 +519,16 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
               : 'https://cdn.discordapp.com/embed/avatars/0.png',
             robloxId: String(link.robloxId || ''),
             robloxUsername: link.robloxUsername,
+            discordRole: topRole ? topRole.name : null,
           };
         })
     )).filter(Boolean);
+
+    // Pre-load Roblox group roles for bulk ranking dropdown (enterprise)
+    let robloxRolesForMembers = [];
+    if (roblox.groupId && roblox.openCloudKey) {
+      try { robloxRolesForMembers = await getGroupRoles(roblox.groupId, roblox.openCloudKey); } catch {}
+    }
 
     const docKeys = await pgDb.list(`doc:${guildId}:`);
     const docs = (await Promise.all(docKeys.map((k) => pgDb.get(k)))).filter(Boolean);
@@ -604,6 +612,8 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           <button id="btn-documents" style="${INACTIVE}" onclick="showTab('documents',this)">&#128196; Documents${!isPremium ? ' 🔒' : ''}</button>
           <button id="btn-verification" style="${INACTIVE}" onclick="showTab('verification',this)">&#128276; Verification</button>
           <button id="btn-join-requests" style="${INACTIVE}" onclick="showTab('join-requests',this)">&#x1F4E8; Join Requests${!isPremium ? ' 🔒' : ''}</button>
+          <button id="btn-rank-history" style="${INACTIVE}" onclick="showTab('rank-history',this)">📜 Rank History${!isEnterprise ? ' 💎' : ''}</button>
+          <button id="btn-enterprise" style="${INACTIVE}" onclick="showTab('enterprise',this)">💎 Enterprise${!isEnterprise ? ' 💎' : ''}</button>
         </div>
 
         <!-- ── Tab: Overview ── -->
@@ -1021,17 +1031,28 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
         </div>
         <div id="tab-members" style="display:none; ${PANEL}">
           ${!isPremium ? `<div style="background:#1a0840; border:1px solid #5b21b6; border-radius:10px; padding:24px; margin-bottom:20px; text-align:center;"><p style="color:#c084fc; font-size:28px; margin:0 0 8px;">🔒</p><p style="color:#fff; font-weight:700; font-size:16px; margin:0 0 6px;">Premium Feature</p><p style="color:#a78bfa; font-size:13px; margin:0 0 16px;">Upgrade to see linked members.</p><a href="/upgrade/${guildId}?plan=premium" style="display:inline-block; padding:10px 24px; background:#7c3aed; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; font-weight:600;">Upgrade — $7/mo</a></div>` : ''}
-          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; gap:8px; flex-wrap:wrap;">
             <div>
               <p style="font-weight:700; margin:0 0 2px; font-size:15px;">Linked Members</p>
               <p style="color:#949ba4; font-size:13px; margin:0;">Roblox rank shown when group is connected, otherwise Discord role.</p>
             </div>
-            <button id="refreshMembersBtn" onclick="loadMemberRanks(true)" style="padding:7px 14px; background:#2b2d31; color:#fff; border:none; border-radius:7px; font-size:13px; cursor:pointer;">↻ Refresh</button>
+            <div style="display:flex; gap:8px; align-items:center;">
+              ${isEnterprise ? `
+              <select id="bulkRankSelect" style="background:#111214; border:1px solid #2b2d31; color:#fff; padding:6px 10px; border-radius:6px; font-size:12px;">
+                <option value="">Bulk rank to…</option>
+                ${(robloxRolesForMembers || []).filter(r => r.rank > 0 && r.rank !== 255).map(r => `<option value="${r.rank}">${r.displayName}</option>`).join('')}
+              </select>
+              <button onclick="bulkRank()" style="padding:6px 12px; background:#7c3aed; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">Rank Selected</button>
+              ` : ''}
+              <button id="exportMembersBtn" onclick="exportMembers()" style="padding:6px 12px; background:#2b2d31; color:#fff; border:none; border-radius:6px; font-size:12px; cursor:pointer;">⬇ Export CSV</button>
+              <button id="refreshMembersBtn" onclick="loadMemberRanks(true)" style="padding:7px 14px; background:#2b2d31; color:#fff; border:none; border-radius:7px; font-size:13px; cursor:pointer;">↻ Refresh</button>
+            </div>
           </div>
           ${linkedMembers.length ? `
           <div style="overflow-x:auto;">
           <table style="width:100%; border-collapse:collapse; font-size:14px;">
             <thead><tr style="border-bottom:1px solid #2b2d31;">
+              ${isEnterprise ? `<th style="padding:8px 10px; width:20px;"><input type="checkbox" id="selectAllMembers" onchange="document.querySelectorAll('.member-cb').forEach(c=>c.checked=this.checked)" style="accent-color:#7c3aed;"/></th>` : ''}
               <th style="text-align:left; padding:8px 10px; color:#949ba4; font-weight:600; font-size:12px;">DISCORD</th>
               <th style="text-align:left; padding:8px 10px; color:#949ba4; font-weight:600; font-size:12px;">ROBLOX</th>
               <th style="text-align:left; padding:8px 10px; color:#949ba4; font-weight:600; font-size:12px;">RANK</th>
@@ -1039,7 +1060,8 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
             </tr></thead>
             <tbody>
               ${linkedMembers.map((m) => `
-              <tr style="border-bottom:1px solid #1a1b1e;">
+              <tr style="border-bottom:1px solid #1a1b1e;" data-roblox-id="${m.robloxId}" data-roblox-name="${m.robloxUsername}">
+                ${isEnterprise ? `<td style="padding:10px;"><input type="checkbox" class="member-cb" value="${m.robloxId}" data-username="${m.robloxUsername}" style="accent-color:#7c3aed;"/></td>` : ''}
                 <td style="padding:10px;">
                   <div style="display:flex; align-items:center; gap:8px;">
                     <img src="${m.avatar}" width="26" height="26" style="border-radius:50%;" />
@@ -1110,6 +1132,30 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
             // Load ranks every time the Members tab is clicked
             document.getElementById('btn-members').addEventListener('click', function(){ loadMemberRanks(true); });
+
+            function exportMembers(){
+              window.location.href='/dashboard/server/${guildId}/export-members';
+            }
+
+            async function bulkRank(){
+              var sel=document.getElementById('bulkRankSelect');
+              if(!sel||!sel.value){alert('Choose a rank first.');return;}
+              var rank=sel.value;
+              var rankName=sel.options[sel.selectedIndex].text;
+              var checked=[...document.querySelectorAll('.member-cb:checked')];
+              if(!checked.length){alert('Select at least one member.');return;}
+              if(!confirm('Rank '+checked.length+' member(s) to '+rankName+'?'))return;
+              var results=await Promise.all(checked.map(async function(cb){
+                try{
+                  var r=await fetch('/dashboard/server/${guildId}/rank-change',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({robloxId:cb.value,robloxUsername:cb.dataset.username,targetRank:parseInt(rank)})});
+                  return await r.json();
+                }catch(e){return{success:false,error:e.message};}
+              }));
+              var ok=results.filter(r=>r.success).length;
+              var fail=results.length-ok;
+              alert(ok+' ranked successfully'+(fail?' ('+fail+' failed)':'')+'.');
+              loadMemberRanks(true);
+            }
           </script>
           ` : `
           <div style="padding:32px; text-align:center; background:#111214; border-radius:10px; border:1px solid #2b2d31;">
@@ -1177,8 +1223,157 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           </div>`}
         </div>
 
+        <!-- ── Tab: Rank History (Enterprise) ── -->
+        <div id="tab-rank-history" style="display:none; ${PANEL}">
+          ${!isEnterprise ? `<div style="background:#1a0640; border:1px solid #7c3aed; border-radius:10px; padding:24px; text-align:center;"><p style="color:#c084fc; font-size:28px; margin:0 0 8px;">💎</p><p style="color:#fff; font-weight:700; font-size:16px; margin:0 0 6px;">Enterprise Feature</p><p style="color:#a78bfa; font-size:13px; margin:0 0 16px;">Upgrade to Enterprise to access full rank history and analytics.</p><a href="/upgrade/${guildId}?plan=enterprise" style="display:inline-block; padding:10px 24px; background:#7c3aed; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; font-weight:600;">Upgrade — $15/mo</a></div>` : `
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+            <div>
+              <p style="font-weight:700; font-size:18px; margin:0 0 4px;">📜 Rank History</p>
+              <p style="color:#949ba4; font-size:13px; margin:0;">Every rank change made through Phantom, newest first.</p>
+            </div>
+            <button onclick="loadRankHistory()" style="padding:7px 14px; background:#2b2d31; color:#fff; border:none; border-radius:7px; font-size:13px; cursor:pointer;">↻ Refresh</button>
+          </div>
+          <div id="rankHistoryList" style="background:#111214; border:1px solid #2b2d31; border-radius:8px; min-height:80px;">
+            <p style="color:#949ba4; font-size:13px; padding:20px; margin:0; text-align:center;">Loading…</p>
+          </div>
+          <script>
+            (function(){ document.getElementById('btn-rank-history').addEventListener('click', loadRankHistory); })();
+            function loadRankHistory(){
+              var el=document.getElementById('rankHistoryList');
+              el.innerHTML='<p style="color:#949ba4;font-size:13px;padding:20px;margin:0;text-align:center;">Loading…</p>';
+              fetch('/dashboard/server/${guildId}/rank-history').then(r=>r.json()).then(function(data){
+                if(!data.entries||!data.entries.length){
+                  el.innerHTML='<p style="color:#949ba4;font-size:13px;padding:20px;margin:0;text-align:center;">No rank changes recorded yet.</p>';
+                  return;
+                }
+                el.innerHTML='<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+                  +'<thead><tr style="border-bottom:1px solid #2b2d31;">'
+                  +'<th style="text-align:left;padding:8px 10px;color:#949ba4;font-size:12px;">USER</th>'
+                  +'<th style="text-align:left;padding:8px 10px;color:#949ba4;font-size:12px;">FROM</th>'
+                  +'<th style="text-align:left;padding:8px 10px;color:#949ba4;font-size:12px;">TO</th>'
+                  +'<th style="text-align:left;padding:8px 10px;color:#949ba4;font-size:12px;">BY</th>'
+                  +'<th style="text-align:left;padding:8px 10px;color:#949ba4;font-size:12px;">REASON</th>'
+                  +'<th style="text-align:left;padding:8px 10px;color:#949ba4;font-size:12px;">DATE</th>'
+                  +'</tr></thead><tbody>'
+                  +data.entries.map(function(e){
+                    var d=new Date(e.ts);
+                    var date=d.toLocaleDateString()+' '+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+                    return '<tr style="border-bottom:1px solid #1a1b1e;">'
+                      +'<td style="padding:8px 10px;color:#c084fc;font-weight:600;">'+e.username+'</td>'
+                      +'<td style="padding:8px 10px;color:#5e6272;">'+( e.oldRank||'N/A')+'</td>'
+                      +'<td style="padding:8px 10px;color:#57f287;font-weight:600;">'+e.newRank+'</td>'
+                      +'<td style="padding:8px 10px;color:#fff;">'+e.ranker+'</td>'
+                      +'<td style="padding:8px 10px;color:#949ba4;">'+( e.reason||'—')+'</td>'
+                      +'<td style="padding:8px 10px;color:#5e6272;font-size:11px;">'+date+'</td>'
+                      +'</tr>';
+                  }).join('')
+                  +'</tbody></table>';
+              }).catch(function(){
+                el.innerHTML='<p style="color:#ed4245;font-size:13px;padding:20px;margin:0;">Failed to load history.</p>';
+              });
+            }
+          </script>
+          `}
+        </div>
+
+        <!-- ── Tab: Enterprise Settings ── -->
+        <div id="tab-enterprise" style="display:none; ${PANEL}">
+          ${!isEnterprise ? `<div style="background:#1a0640; border:1px solid #7c3aed; border-radius:10px; padding:24px; text-align:center;"><p style="color:#c084fc; font-size:28px; margin:0 0 8px;">💎</p><p style="color:#fff; font-weight:700; font-size:16px; margin:0 0 6px;">Enterprise Features</p><p style="color:#a78bfa; font-size:13px; margin:0 0 16px;">Unlock rank history, bulk ranking, scheduled sync, custom branding, and more.</p><a href="/upgrade/${guildId}?plan=enterprise" style="display:inline-block; padding:10px 24px; background:#7c3aed; color:#fff; border-radius:8px; text-decoration:none; font-size:14px; font-weight:600;">Upgrade — $15/mo</a></div>` : `
+          <p style="font-weight:700; font-size:18px; margin:0 0 4px;">💎 Enterprise Settings</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 24px;">Configure enterprise-exclusive features for this server.</p>
+
+          <hr style="border:none; border-top:1px solid #2b2d31; margin:0 0 24px;" />
+
+          <!-- Scheduled Rank Sync -->
+          <p style="font-weight:700; font-size:15px; margin:0 0 4px;">🔄 Scheduled Rank Sync</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 16px; line-height:1.6;">Automatically re-syncs all linked members' Discord roles to their current Roblox group rank on a schedule. Catches rank changes made outside the bot.</p>
+          <form method="POST" action="/dashboard/server/${guildId}/enterprise/sync-settings">
+            <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px; background:#111214; padding:14px 16px; border-radius:8px; border:1px solid #2b2d31;">
+              <input type="checkbox" name="syncEnabled" id="syncEnabled" value="1" ${enterprise.syncEnabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:#7c3aed;cursor:pointer;" />
+              <label for="syncEnabled" style="color:#fff;font-size:14px;font-weight:600;cursor:pointer;">Enable scheduled sync</label>
+            </div>
+            <p style="font-weight:700; font-size:13px; margin:0 0 6px;">Sync Interval</p>
+            <select name="syncInterval" style="width:100%; ${fieldStyle} margin-bottom:16px;">
+              <option value="6"  ${enterprise.syncInterval==6  ? 'selected' : ''}>Every 6 hours</option>
+              <option value="12" ${enterprise.syncInterval==12 ? 'selected' : ''}>Every 12 hours</option>
+              <option value="24" ${enterprise.syncInterval==24 ? 'selected' : ''}>Daily (24 hours)</option>
+              <option value="168" ${enterprise.syncInterval==168 ? 'selected' : ''}>Weekly</option>
+            </select>
+            <p style="font-weight:700; font-size:13px; margin:0 0 6px;">Sync Log Channel <span style="color:#949ba4;font-weight:400;">(optional)</span></p>
+            <select name="syncLogChannelId" style="width:100%; ${fieldStyle} margin-bottom:20px;">
+              <option value="">-- None --</option>${channelOptions(enterprise.syncLogChannelId)}
+            </select>
+            <button type="submit" style="${buttonStyle}">Save Sync Settings</button>
+          </form>
+
+          <hr style="border:none; border-top:1px solid #2b2d31; margin:28px 0;" />
+
+          <!-- Custom Embed Branding -->
+          <p style="font-weight:700; font-size:15px; margin:0 0 4px;">🎨 Custom Embed Branding</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 16px;">Change how Phantom's embeds look in your server.</p>
+          <form method="POST" action="/dashboard/server/${guildId}/enterprise/branding">
+            <p style="font-weight:700; font-size:13px; margin:0 0 6px;">Embed Colour <span style="color:#949ba4;font-weight:400;">(hex)</span></p>
+            <div style="display:flex; gap:8px; margin-bottom:16px;">
+              <input type="color" name="embedColorPicker" value="#${enterprise.embedColor ? enterprise.embedColor.toString(16).padStart(6,'0') : '5865F2'}" oninput="document.getElementById('embedColorHex').value=this.value.replace('#','')" style="width:44px;height:36px;padding:2px;background:#111214;border:1px solid #2b2d31;border-radius:6px;cursor:pointer;" />
+              <input type="text" name="embedColor" id="embedColorHex" placeholder="5865F2" value="${enterprise.embedColor ? enterprise.embedColor.toString(16).padStart(6,'0') : '5865F2'}" maxlength="6" style="flex:1; ${fieldStyle}" />
+            </div>
+            <p style="font-weight:700; font-size:13px; margin:0 0 6px;">Embed Footer Text <span style="color:#949ba4;font-weight:400;">(optional)</span></p>
+            <input type="text" name="embedFooter" placeholder="Powered by Phantom" value="${enterprise.embedFooter || ''}" maxlength="100" style="width:100%; ${fieldStyle} margin-bottom:16px; box-sizing:border-box;" />
+            <p style="font-weight:700; font-size:13px; margin:0 0 6px;">Bot Nickname in this server <span style="color:#949ba4;font-weight:400;">(optional)</span></p>
+            <input type="text" name="botNickname" placeholder="Leave blank for default (Phantom)" value="${enterprise.botNickname || ''}" maxlength="32" style="width:100%; ${fieldStyle} margin-bottom:20px; box-sizing:border-box;" />
+            <button type="submit" style="${buttonStyle}">Save Branding</button>
+          </form>
+
+          <hr style="border:none; border-top:1px solid #2b2d31; margin:28px 0;" />
+
+          <!-- Dashboard Staff Roles -->
+          <p style="font-weight:700; font-size:15px; margin:0 0 4px;">🔑 Dashboard Access Roles</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 16px; line-height:1.6;">Members with any of these Discord roles can access this server's Phantom dashboard (in addition to server admins).</p>
+          <form method="POST" action="/dashboard/server/${guildId}/enterprise/staff-roles">
+            ${enterprise.staffRoles && enterprise.staffRoles.length ? `
+            <div style="margin-bottom:12px;">
+              ${enterprise.staffRoles.map(rid => `
+                <div style="display:flex; align-items:center; justify-content:space-between; background:#111214; border:1px solid #2b2d31; border-radius:6px; padding:8px 12px; margin-bottom:6px;">
+                  <span style="color:#fff; font-size:13px;">${roleName(rid) || rid}</span>
+                  <button type="button" onclick="removeStaffRole('${rid}')" style="background:none; border:none; color:#ed4245; cursor:pointer; font-size:13px;">Remove</button>
+                </div>`).join('')}
+            </div>` : '<p style="color:#5e6272; font-size:13px; margin:0 0 12px;">No staff roles configured.</p>'}
+            <select id="addStaffRoleSelect" style="width:100%; ${fieldStyle} margin-bottom:10px;">
+              <option value="">-- Add a role --</option>
+              ${assignableRoles.filter(r => !(enterprise.staffRoles||[]).includes(r.id)).map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
+            </select>
+            <button type="button" onclick="addStaffRole()" style="${buttonStyle}">Add Role</button>
+          </form>
+          <script>
+            async function addStaffRole(){
+              var sel=document.getElementById('addStaffRoleSelect');
+              if(!sel.value)return;
+              var r=await fetch('/dashboard/server/${guildId}/enterprise/staff-roles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add',roleId:sel.value})});
+              if((await r.json()).success) location.reload();
+            }
+            async function removeStaffRole(id){
+              var r=await fetch('/dashboard/server/${guildId}/enterprise/staff-roles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'remove',roleId:id})});
+              if((await r.json()).success) location.reload();
+            }
+          </script>
+
+          <hr style="border:none; border-top:1px solid #2b2d31; margin:28px 0;" />
+
+          <!-- Custom Verification Message -->
+          <p style="font-weight:700; font-size:15px; margin:0 0 4px;">✉️ Custom Verification Message</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 16px;">Customise the text shown in the verification embed that members see.</p>
+          <form method="POST" action="/dashboard/server/${guildId}/enterprise/verification-message">
+            <p style="font-weight:700; font-size:13px; margin:0 0 6px;">Title</p>
+            <input type="text" name="verifyTitle" placeholder="Link your Roblox Account" value="${enterprise.verifyTitle || ''}" maxlength="80" style="width:100%; ${fieldStyle} margin-bottom:12px; box-sizing:border-box;" />
+            <p style="font-weight:700; font-size:13px; margin:0 0 6px;">Description</p>
+            <textarea name="verifyDescription" rows="4" placeholder="Click the button below to link your Roblox account and gain access to this server." maxlength="500" style="width:100%; ${fieldStyle} resize:vertical; font-family:inherit; margin-bottom:20px; box-sizing:border-box;">${enterprise.verifyDescription || ''}</textarea>
+            <button type="submit" style="${buttonStyle}">Save Verification Message</button>
+          </form>
+          `}
+        </div>
+
         <script>
-          var ALL_TABS=['overview','group-setup','rank-management','audit-logs','members','documents','verification','join-requests'];
+          var ALL_TABS=['overview','group-setup','rank-management','audit-logs','members','documents','verification','join-requests','rank-history','enterprise'];
           function showTab(name,btn){
             ALL_TABS.forEach(function(t){
               document.getElementById('tab-'+t).style.display='none';
@@ -1593,15 +1788,16 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/post-verification-panel', a
   const verification = await getConfigValue({ db }, guildId, 'verification', {});
   if (!verification.channelId) return res.redirect(`/dashboard/server/${guildId}?error=No+verification+channel+set#verification`);
   try {
+    const enterprise = await getConfigValue({ db }, guildId, 'enterprise', {});
+    const embedTitle = enterprise.verifyTitle || 'Link your Roblox Account';
+    const embedDesc  = enterprise.verifyDescription || 'Click **Link Roblox** to connect your Roblox account and sync your group roles.\n\nAlready linked? Click **Update** to refresh your roles if your rank changed.';
+    const embedColor = enterprise.embedColor || 0x5865F2;
+    const embedFooter = enterprise.embedFooter ? { text: enterprise.embedFooter } : undefined;
     const panelRes = await fetch(`https://discord.com/api/channels/${verification.channelId}/messages`, {
       method: 'POST',
       headers: { Authorization: `Bot ${BOT_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        embeds: [{
-          title: 'Link your Roblox Account',
-          description: 'Click **Link Roblox** to connect your Roblox account and sync your group roles.\n\nAlready linked? Click **Update** to refresh your roles if your rank changed.',
-          color: 0x5865F2,
-        }],
+        embeds: [{ title: embedTitle, description: embedDesc, color: embedColor, footer: embedFooter }],
         components: [{
           type: 1,
           components: [
@@ -1785,6 +1981,16 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/rank-change', async (req, r
           ],
         }).catch(() => {});
       }
+      // Save to rank history (enterprise)
+      const histEntry = {
+        username: req.body.robloxUsername || `ID ${robloxId}`,
+        oldRank: null,
+        newRank: result.newRankName || String(targetRank),
+        ranker: access.user.username,
+        reason: req.body.reason || null,
+        ts: Date.now(),
+      };
+      await pgDb.set(`rank_history:${guildId}:${histEntry.ts}:${Math.random().toString(36).slice(2)}`, histEntry).catch(() => {});
     }
 
     return res.json(result);
@@ -1833,5 +2039,140 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/member-ranks', async (req, 
   } catch (err) {
     logger.error('member-ranks error:', err);
     return res.json({ ranks: {} });
+  }
+});
+
+// ── Enterprise: Rank History ──────────────────────────────────────────────────
+dashboardAuthRouter.get('/dashboard/server/:guildId/rank-history', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  const sub  = await getSubscription(guildId);
+  const tier = isOwner(access.user.id) ? 'enterprise' : getTier(sub);
+  if (tier !== 'enterprise') return res.json({ entries: [] });
+
+  try {
+    const keys = (await pgDb.list(`rank_history:${guildId}:`)).sort().reverse().slice(0, 200);
+    const entries = (await Promise.all(keys.map(k => pgDb.get(k)))).filter(Boolean);
+    return res.json({ entries });
+  } catch (e) {
+    return res.json({ entries: [], error: e.message });
+  }
+});
+
+// ── Enterprise: Sync Settings ─────────────────────────────────────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/enterprise/sync-settings', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  const sub  = await getSubscription(guildId);
+  const tier = isOwner(access.user.id) ? 'enterprise' : getTier(sub);
+  if (tier !== 'enterprise') return res.redirect(`/dashboard/server/${guildId}?error=Enterprise+required`);
+
+  const syncEnabled      = req.body.syncEnabled === '1';
+  const syncInterval     = parseInt(req.body.syncInterval) || 24;
+  const syncLogChannelId = req.body.syncLogChannelId || null;
+  const current = await getConfigValue({ db }, guildId, 'enterprise', {});
+  await updateGuildConfig({ db }, guildId, { enterprise: { ...current, syncEnabled, syncInterval, syncLogChannelId } });
+  res.redirect(`/dashboard/server/${guildId}?success=Sync+settings+saved#enterprise`);
+});
+
+// ── Enterprise: Branding ──────────────────────────────────────────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/enterprise/branding', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  const sub  = await getSubscription(guildId);
+  const tier = isOwner(access.user.id) ? 'enterprise' : getTier(sub);
+  if (tier !== 'enterprise') return res.redirect(`/dashboard/server/${guildId}?error=Enterprise+required`);
+
+  const embedColor  = parseInt((req.body.embedColor || '5865F2').replace('#', ''), 16) || 0x5865F2;
+  const embedFooter = (req.body.embedFooter || '').trim().slice(0, 100) || null;
+  const botNickname = (req.body.botNickname || '').trim().slice(0, 32) || null;
+  const current = await getConfigValue({ db }, guildId, 'enterprise', {});
+  await updateGuildConfig({ db }, guildId, { enterprise: { ...current, embedColor, embedFooter, botNickname } });
+
+  // Apply bot nickname in the guild
+  if (botNickname !== null) {
+    const botId = process.env.CLIENT_ID;
+    await fetch(`https://discord.com/api/guilds/${guildId}/members/${botId}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bot ${BOT_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nick: botNickname || '' }),
+    }).catch(() => {});
+  }
+  res.redirect(`/dashboard/server/${guildId}?success=Branding+saved#enterprise`);
+});
+
+// ── Enterprise: Staff Roles ───────────────────────────────────────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/enterprise/staff-roles', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  const sub  = await getSubscription(guildId);
+  const tier = isOwner(access.user.id) ? 'enterprise' : getTier(sub);
+  if (tier !== 'enterprise') return res.json({ success: false });
+
+  const { action, roleId } = req.body;
+  const current = await getConfigValue({ db }, guildId, 'enterprise', {});
+  let staffRoles = current.staffRoles || [];
+  if (action === 'add' && roleId && !staffRoles.includes(roleId)) staffRoles = [...staffRoles, roleId];
+  if (action === 'remove') staffRoles = staffRoles.filter(r => r !== roleId);
+  await updateGuildConfig({ db }, guildId, { enterprise: { ...current, staffRoles } });
+  return res.json({ success: true });
+});
+
+// ── Enterprise: Verification Message ─────────────────────────────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/enterprise/verification-message', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  const sub  = await getSubscription(guildId);
+  const tier = isOwner(access.user.id) ? 'enterprise' : getTier(sub);
+  if (tier !== 'enterprise') return res.redirect(`/dashboard/server/${guildId}?error=Enterprise+required`);
+
+  const verifyTitle       = (req.body.verifyTitle || '').trim().slice(0, 80) || null;
+  const verifyDescription = (req.body.verifyDescription || '').trim().slice(0, 500) || null;
+  const current = await getConfigValue({ db }, guildId, 'enterprise', {});
+  await updateGuildConfig({ db }, guildId, { enterprise: { ...current, verifyTitle, verifyDescription } });
+  res.redirect(`/dashboard/server/${guildId}?success=Verification+message+saved#enterprise`);
+});
+
+// ── Enterprise: Member Export CSV ────────────────────────────────────────────
+dashboardAuthRouter.get('/dashboard/server/:guildId/export-members', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  try {
+    const [membersRes, roblox] = await Promise.all([
+      fetch(`https://discord.com/api/guilds/${guildId}/members?limit=1000`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
+      getConfigValue({ db }, guildId, 'roblox', {}),
+    ]);
+    const guildMembers  = membersRes.ok ? await membersRes.json() : [];
+    const guildMemberMap = new Map(guildMembers.map(m => [m.user.id, m]));
+    const allLinkedKeys = await pgDb.list('roblox_link:');
+    const rows = (await Promise.all(
+      allLinkedKeys.map(async k => {
+        const discordId = k.replace('roblox_link:', '');
+        const link = await pgDb.get(k);
+        if (!link) return null;
+        const m = guildMemberMap.get(discordId);
+        if (!m) return null;
+        return [
+          JSON.stringify(m.nick || m.user.username),
+          JSON.stringify(m.user.id),
+          JSON.stringify(link.robloxUsername || ''),
+          JSON.stringify(String(link.robloxId || '')),
+        ].join(',');
+      })
+    )).filter(Boolean);
+
+    const csv = 'Discord Name,Discord ID,Roblox Username,Roblox ID\n' + rows.join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="phantom-members-${guildId}.csv"`);
+    return res.send(csv);
+  } catch (e) {
+    return res.status(500).send('Export failed.');
   }
 });
