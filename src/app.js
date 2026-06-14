@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Client, Collection, GatewayIntentBits } from 'discord.js';
+import { Client, Collection, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { REST } from '@discordjs/rest';
 import express from 'express';
 import cron from 'node-cron';
@@ -52,14 +52,6 @@ class PhantomBot extends Client {
 
   async start() {
     try {
-      // Validate required environment variables before doing anything else
-      const requiredEnvVars = ['DISCORD_TOKEN', 'CLIENT_ID'];
-      const missingEnvVars = requiredEnvVars.filter(v => !process.env[v]);
-      if (missingEnvVars.length > 0) {
-        logger.error(`Missing required environment variables: ${missingEnvVars.join(', ')}`);
-        process.exit(1);
-      }
-
       startupLog('Starting PhantomBot...');
       await new Promise(resolve => setTimeout(resolve, 1000));
       
@@ -103,6 +95,45 @@ class PhantomBot extends Client {
       const player = new Player(this);
       await player.extractors.loadMulti(DefaultExtractors);
       this.player = player;
+
+      // Auto-post a rich Now Playing card whenever a track starts
+      player.events.on('playerStart', (queue, track) => {
+        const channel = queue.metadata?.channel;
+        if (!channel?.send) return;
+
+        const timestamp = queue.node.getTimestamp();
+        const elapsed  = timestamp?.current?.label  ?? '0:00';
+        const total    = timestamp?.total?.label    ?? track.duration;
+        const pct      = timestamp?.progress        ?? 0;
+
+        // Build progress bar: 20 segments
+        const filled = Math.round(pct / 5);
+        const bar    = '▬'.repeat(filled) + '🔘' + '▬'.repeat(Math.max(0, 20 - filled));
+
+        const embed = new EmbedBuilder()
+          .setColor(0x7c3aed)
+          .setAuthor({ name: '🎵 Now Playing' })
+          .setTitle(track.title)
+          .setURL(track.url)
+          .setDescription(`${bar}\n\`${elapsed} / ${total}\``)
+          .addFields(
+            { name: 'Author',        value: track.author  || 'Unknown', inline: true },
+            { name: 'Requested by',  value: track.requestedBy ? `<@${track.requestedBy.id}>` : 'Unknown', inline: true },
+            { name: 'Duration',      value: total,                                         inline: true },
+          )
+          .setThumbnail(track.thumbnail ?? null);
+
+        channel.send({ embeds: [embed] }).catch(() => {});
+      });
+
+      // Notify when the queue ends
+      player.events.on('emptyQueue', (queue) => {
+        const channel = queue.metadata?.channel;
+        if (channel?.send) {
+          channel.send({ embeds: [new EmbedBuilder().setColor(0x7c3aed).setDescription('✅ Queue finished — use `/play` to add more songs!')] }).catch(() => {});
+        }
+      });
+
       startupLog('Music player ready');
       
       startupLog('Registering slash commands...');
@@ -176,21 +207,6 @@ class PhantomBot extends Client {
       next();
     });
 
-    // Periodically evict expired entries from the rate-limiter map to prevent
-    // unbounded memory growth from accumulating stale IP records.
-    setInterval(() => {
-      const now = Date.now();
-      const windowStart = now - windowMs;
-      for (const [ip, times] of requestCounts) {
-        const valid = times.filter(t => t > windowStart);
-        if (valid.length === 0) {
-          requestCounts.delete(ip);
-        } else {
-          requestCounts.set(ip, valid);
-        }
-      }
-    }, 60000);
-
     app.get('/health', (req, res) => {
       const dbStatus = this.db?.getStatus?.() || { isDegraded: 'unknown' };
       const status = {
@@ -207,17 +223,8 @@ class PhantomBot extends Client {
     });
 
     app.get('/ready', (req, res) => {
-      // Guard against hanging requests with a 5-second hard timeout.
-      const timeout = setTimeout(() => {
-        if (!res.headersSent) {
-          res.status(503).json({ ready: false, reason: 'Health check timed out' });
-        }
-      }, 5000);
-
       const dbStatus = this.db?.getStatus?.() || { isDegraded: true };
       const isReady = this.isReady() && !dbStatus.isDegraded;
-
-      clearTimeout(timeout);
 
       if (isReady) {
         return res.status(200).json({
@@ -798,11 +805,12 @@ try {
     
     process.on('uncaughtException', (error) => {
       logger.error('Uncaught Exception:', error);
-      process.exit(1);
+      bot.shutdown('UNCAUGHT_EXCEPTION');
     });
-
+    
     process.on('unhandledRejection', (reason, promise) => {
       logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+      bot.shutdown('UNHANDLED_REJECTION');
     });
   };
   
