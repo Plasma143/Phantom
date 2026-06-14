@@ -638,6 +638,19 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           </form>
           <p style="font-weight:700; margin:0 0 4px; font-size:15px;">Rank Roles</p>
           <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Maps a Roblox group rank number to a Discord role.</p>
+
+          ${roblox.groupId && roblox.openCloudKey ? `
+          <div style="background:#111214; border:1px solid #2b2d31; border-radius:10px; padding:14px 16px; margin-bottom:14px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+            <div>
+              <p style="color:#fff; font-weight:700; font-size:14px; margin:0 0 3px;">⚡ Auto-Bind Roles</p>
+              <p style="color:#949ba4; font-size:12px; margin:0;">Fetches your Roblox group ranks, matches existing Discord roles by name, and creates any that are missing — then saves all mappings automatically.</p>
+            </div>
+            <a href="/dashboard/server/${guildId}/auto-bind-roles" style="display:inline-block; padding:9px 16px; background:#5865F2; color:#fff; border-radius:8px; text-decoration:none; font-size:13px; font-weight:600; white-space:nowrap; flex-shrink:0;">Auto-Bind Roles</a>
+          </div>
+          ` : roblox.groupId ? `
+          <p style="color:#949ba4; font-size:12px; background:#111214; border-radius:8px; padding:10px 14px; border:1px solid #2b2d31; margin-bottom:14px;">Save an Open Cloud API key in Rank Management to enable Auto-Bind.</p>
+          ` : ''}
+
           <ul style="list-style:none; padding:0; margin:0 0 12px;">${rankRolesHtml}</ul>
           <form method="POST" action="/dashboard/server/${guildId}/rank-roles" style="display:flex; gap:8px;">
             <input type="number" name="rank" min="0" max="255" placeholder="Rank #" style="width:80px; ${fieldStyle}" required />
@@ -1020,6 +1033,88 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/rank-roles/remove', async (
   await updateGuildConfig({ db }, guildId, { roblox: { ...current, rankRoles } });
 
   res.redirect(`/dashboard/server/${guildId}?success=Rank+role+removed`);
+});
+
+// Auto-bind: fetch all Roblox group ranks, match/create Discord roles, save mappings.
+dashboardAuthRouter.get('/dashboard/server/:guildId/auto-bind-roles', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  try {
+    const roblox = await getConfigValue({ db }, guildId, 'roblox', {});
+    if (!roblox.groupId || !roblox.openCloudKey) {
+      return res.redirect(`/dashboard/server/${guildId}?error=Configure+group+ID+and+Open+Cloud+key+first#group-setup`);
+    }
+
+    // Fetch all Roblox group ranks (skipping Guest 0 and Owner 255)
+    const robloxRoles = await getGroupRoles(roblox.groupId, roblox.openCloudKey);
+    if (!robloxRoles?.length) {
+      return res.redirect(`/dashboard/server/${guildId}?error=Could+not+fetch+Roblox+group+ranks#group-setup`);
+    }
+    const ranksToMap = robloxRoles.filter((r) => r.rank > 0 && r.rank < 255);
+
+    // Fetch existing Discord roles
+    const discordRolesRes = await fetch(`https://discord.com/api/guilds/${guildId}/roles`, {
+      headers: { Authorization: `Bot ${BOT_TOKEN}` },
+    });
+    const discordRoles = discordRolesRes.ok ? await discordRolesRes.json() : [];
+    const discordByName = new Map(discordRoles.map((r) => [r.name.toLowerCase(), r.id]));
+
+    const rankRoles = { ...(roblox.rankRoles || {}) };
+    let created = 0;
+    let matched = 0;
+
+    for (const rRole of ranksToMap) {
+      const name = rRole.displayName;
+      const nameLower = name.toLowerCase();
+
+      // Already mapped — skip
+      if (rankRoles[rRole.rank]) { matched++; continue; }
+
+      // Existing Discord role with the same name?
+      if (discordByName.has(nameLower)) {
+        rankRoles[rRole.rank] = discordByName.get(nameLower);
+        matched++;
+        continue;
+      }
+
+      // Create a new Discord role
+      const createRes = await fetch(`https://discord.com/api/guilds/${guildId}/roles`, {
+        method: 'POST',
+        headers: { Authorization: `Bot ${BOT_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, permissions: '0' }),
+      });
+
+      if (createRes.ok) {
+        const newRole = await createRes.json();
+        rankRoles[rRole.rank] = newRole.id;
+        discordByName.set(nameLower, newRole.id); // prevent dupes on next loop
+        created++;
+      }
+    }
+
+    await updateGuildConfig({ db }, guildId, { roblox: { ...roblox, rankRoles } });
+
+    // Post to #dashboard-logs
+    const auditCfg = await getConfigValue({ db }, guildId, 'auditLogs', {});
+    if (auditCfg.dashboardChannelId) {
+      await sendBotEmbed(auditCfg.dashboardChannelId, {
+        color: 0x57F287,
+        title: '⚡ Auto-Bind Roles Run',
+        fields: [
+          { name: 'By', value: access.user.username, inline: true },
+          { name: 'Roles Created', value: String(created), inline: true },
+          { name: 'Already Matched', value: String(matched), inline: true },
+        ],
+      }).catch(() => {});
+    }
+
+    res.redirect(`/dashboard/server/${guildId}?success=Auto-bind+complete+%E2%80%94+${created}+role${created !== 1 ? 's' : ''}+created,+${matched}+matched#group-setup`);
+  } catch (err) {
+    logger.error('auto-bind-roles error:', err);
+    res.redirect(`/dashboard/server/${guildId}?error=Something+went+wrong+during+auto-bind#group-setup`);
+  }
 });
 
 // ---- Rank management handlers ----
