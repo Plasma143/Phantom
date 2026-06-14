@@ -25,14 +25,14 @@ export default {
 
     try {
       const { track } = await player.play(voiceChannel, query, {
+        requestedBy: interaction.user,
         nodeOptions: {
           metadata: { channel: interaction.channel },
           selfDeaf: true,
           volume: 80,
           leaveOnEmpty: true,
-          leaveOnEmptyCooldown: 30000,
-          leaveOnEnd: true,
-          leaveOnEndCooldown: 30000,
+          leaveOnEmptyCooldown: 300000, // 5 minutes when VC is empty
+          leaveOnEnd: false,            // stay in VC after queue ends
         },
       });
 
