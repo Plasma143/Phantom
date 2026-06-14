@@ -10,6 +10,7 @@ import express from 'express';
 import { randomUUID } from 'crypto';
 import { saveRobloxLink } from '../utils/robloxDb.js';
 import { logger } from '../utils/logger.js';
+import { getClient } from '../utils/clientRef.js';
 
 const ROBLOX_AUTHORIZE_URL = 'https://apis.roblox.com/oauth/v1/authorize';
 const ROBLOX_TOKEN_URL = 'https://apis.roblox.com/oauth/v1/token';
@@ -35,13 +36,14 @@ export const robloxOAuthRouter = express.Router();
 // Step A: send the user to Roblox's login/consent page.
 robloxOAuthRouter.get('/auth/roblox', (req, res) => {
   const discordId = req.query.discordId;
+  const guildId = req.query.guildId;
   if (!discordId) {
     return res.status(400).send('Missing discordId.');
   }
 
   cleanupExpiredStates();
   const state = randomUUID();
-  pendingStates.set(state, { discordId, createdAt: Date.now() });
+  pendingStates.set(state, { discordId, guildId: guildId || null, createdAt: Date.now() });
 
   const params = new URLSearchParams({
     client_id: CLIENT_ID,
@@ -102,6 +104,24 @@ robloxOAuthRouter.get('/auth/roblox/callback', async (req, res) => {
     const robloxUsername = profile.preferred_username || profile.name;
 
     await saveRobloxLink(pending.discordId, profile.sub, robloxUsername);
+
+    // Set the member's Discord nickname to their Roblox username
+    try {
+      const client = getClient();
+      if (client && pending.guildId) {
+        const guild = client.guilds.cache.get(pending.guildId);
+        if (guild) {
+          const member = await guild.members.fetch(pending.discordId).catch(() => null);
+          if (member) {
+            await member.setNickname(robloxUsername).catch(() => {
+              // Can't rename server owner or members with higher roles — safe to ignore
+            });
+          }
+        }
+      }
+    } catch (err) {
+      logger.debug('Could not set nickname after OAuth link:', err.message);
+    }
 
     logger.info('Linked Roblox account via OAuth', {
       discordId: pending.discordId,
