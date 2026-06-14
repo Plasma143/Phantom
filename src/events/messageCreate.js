@@ -7,7 +7,7 @@ import { getConfigValue } from '../services/guildConfig.js';
 import { getRobloxUserByUsername, getGroupRoles, updateGroupMemberRank } from '../utils/roblox.js';
 import { parsePromotionLog, applyFormat, DEFAULT_LOG_FORMAT } from '../services/promotionParser.js';
 import { db } from '../utils/database.js';
-import { handleTTSMessage } from '../commands/Utility/tts.js';
+import { handleTTSMessage } from '../commands/Voice/tts.js';
 
 const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
 const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
