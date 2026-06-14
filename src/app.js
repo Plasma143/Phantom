@@ -17,6 +17,7 @@ import { loadCommands, registerCommands as registerSlashCommands } from './handl
 import { robloxOAuthRouter } from './web/robloxOAuth.js';
 import { dashboardAuthRouter } from './web/dashboardAuth.js';
 import { stripeRouter } from './web/stripePayments.js';
+import { setClient } from './utils/clientRef.js';
 
 class PhantomBot extends Client {
   constructor() {
@@ -87,6 +88,7 @@ class PhantomBot extends Client {
       
       startupLog('Logging into Discord...');
       await this.login(this.config.bot.token);
+      setClient(this);
       startupLog('Discord login successful');
 
       startupLog('Initialising music player...');
