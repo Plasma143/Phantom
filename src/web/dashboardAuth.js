@@ -23,7 +23,7 @@ import { getConfigValue, updateGuildConfig } from '../services/guildConfig.js';
 import { db } from '../utils/database.js';
 import { pgDb } from '../utils/postgresDatabase.js';
 import { getRobloxGroupInfo, getRobloxUserByUsername, getGroupRoles, getGroupMembership, updateGroupMemberRank } from '../utils/roblox.js';
-import { getSubscription, getTier } from './stripePayments.js';
+import { getSubscription, getTier, getBoostDiscount } from './stripePayments.js';
 
 const PUBLIC_URL = process.env.PUBLIC_URL || 'https://phantom1.up.railway.app';
 const REDIRECT_URI = `${PUBLIC_URL}/dashboard/auth/callback`;
@@ -477,7 +477,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
     const { guild, user } = access;
 
-    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification, autoRank, subscription] = await Promise.all([
+    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification, autoRank, subscription, boostDiscount] = await Promise.all([
       fetch(`https://discord.com/api/guilds/${guildId}/roles`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       fetch(`https://discord.com/api/guilds/${guildId}/channels`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       fetch(`https://discord.com/api/guilds/${guildId}/members?limit=1000`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
@@ -486,6 +486,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
       getConfigValue({ db }, guildId, 'verification', {}),
       getConfigValue({ db }, guildId, 'autoRank', {}),
       getSubscription(guildId),
+      getBoostDiscount(user.id),
     ]);
 
     const allRoles = rolesRes.ok ? await rolesRes.json() : [];
@@ -549,15 +550,24 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
     const isEnterprise = tier === 'enterprise';
 
     // Upgrade banner for free servers
+    const boostBadge = boostDiscount
+      ? `<span style="background:#f59e0b; color:#000; font-size:11px; font-weight:700; padding:2px 7px; border-radius:99px; margin-left:8px;">⚡ ${boostDiscount.percent}% OFF</span>`
+      : '';
+    const premiumLabel  = `Premium${ boostDiscount ? ` <s style="opacity:.55">$7</s> $${(7 * (1 - boostDiscount.percent / 100)).toFixed(2)}` : ' $7'}/mo`;
+    const enterpriseLabel = `Enterprise${ boostDiscount ? ` <s style="opacity:.55">$15</s> $${(15 * (1 - boostDiscount.percent / 100)).toFixed(2)}` : ' $15'}/mo`;
+    const boostNote = boostDiscount
+      ? `<p style="color:#f59e0b; font-size:11px; margin:6px 0 0;">⚡ ${boostDiscount.label}</p>`
+      : '';
     const upgradeBanner = !isPremium ? `
       <div style="background:linear-gradient(135deg,#2d1b69,#1a0840); border:1px solid #5b21b6; border-radius:10px; padding:14px 18px; margin-bottom:20px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
         <div>
-          <p style="color:#c084fc; font-weight:700; font-size:14px; margin:0 0 3px;">⚡ Unlock Phantom Premium</p>
+          <p style="color:#c084fc; font-weight:700; font-size:14px; margin:0 0 3px;">⚡ Unlock Phantom Premium${boostBadge}</p>
           <p style="color:#a78bfa; font-size:12px; margin:0;">Auto-Rank, live member ranks, audit logs, documents and more — from $7/month.</p>
+          ${boostNote}
         </div>
         <div style="display:flex; gap:8px; flex-shrink:0;">
-          <a href="/upgrade/${guildId}?plan=premium" style="display:inline-block; padding:8px 14px; background:#7c3aed; color:#fff; border-radius:8px; text-decoration:none; font-size:13px; font-weight:600;">Premium $7/mo</a>
-          <a href="/upgrade/${guildId}?plan=enterprise" style="display:inline-block; padding:8px 14px; background:#4c1d95; color:#c084fc; border-radius:8px; text-decoration:none; font-size:13px; font-weight:600;">Enterprise $15/mo</a>
+          <a href="/upgrade/${guildId}?plan=premium" style="display:inline-block; padding:8px 14px; background:#7c3aed; color:#fff; border-radius:8px; text-decoration:none; font-size:13px; font-weight:600;">${premiumLabel}</a>
+          <a href="/upgrade/${guildId}?plan=enterprise" style="display:inline-block; padding:8px 14px; background:#4c1d95; color:#c084fc; border-radius:8px; text-decoration:none; font-size:13px; font-weight:600;">${enterpriseLabel}</a>
         </div>
       </div>` : '';
 
