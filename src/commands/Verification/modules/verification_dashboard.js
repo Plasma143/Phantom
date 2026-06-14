@@ -293,19 +293,6 @@ export default {
                 }
                 
                 const wasEnabled = cfg.enabled !== false;
-                const autoVerifyEnabled = Boolean(guildConfig.verification?.autoVerify?.enabled);
-
-                // Prevent enabling Verification if AutoVerify is enabled
-                if (!wasEnabled && autoVerifyEnabled) {
-                    await btnInteraction.followUp({
-                        embeds: [errorEmbed(
-                            '❌ Cannot Enable Verification',
-                            'AutoVerify is currently enabled. Please disable AutoVerify first before enabling the manual Verification system.\n\nRun `/autoverify` to access the AutoVerify dashboard.'
-                        )],
-                        flags: MessageFlags.Ephemeral,
-                    });
-                    return;
-                }
 
                 cfg.enabled = !wasEnabled;
 
