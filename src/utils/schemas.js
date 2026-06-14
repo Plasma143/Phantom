@@ -49,7 +49,8 @@ const RobloxConfigSchema = z
     enabled: z.boolean().default(false),
     groupId: z.string().nullable().optional(),
     verifiedRole: z.string().nullable().optional(),
-    rankRoles: z.record(z.string()).default({})
+    rankRoles: z.record(z.string()).default({}),
+    openCloudKey: z.string().nullable().optional(),
   })
   .optional();
 
