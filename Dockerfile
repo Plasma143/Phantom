@@ -1,7 +1,9 @@
 FROM node:20-slim
 
 # Install ffmpeg, opus, and SVOX Pico TTS (offline TTS — no API key required)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# libttspico packages are not in Bookworm — pull them from the Debian Buster non-free archive.
+RUN echo "deb http://archive.debian.org/debian buster non-free" >> /etc/apt/sources.list.d/buster-nonfree.list \
+  && apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     python3 \
     make \
@@ -10,7 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libttspico0 \
     libttspico-data \
     libttspico-utils \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && rm /etc/apt/sources.list.d/buster-nonfree.list
 
 # Create app directory
 WORKDIR /usr/src/app
