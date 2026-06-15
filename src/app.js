@@ -18,6 +18,7 @@ import { loadCommands, registerCommands as registerSlashCommands } from './handl
 import { robloxOAuthRouter } from './web/robloxOAuth.js';
 import { dashboardAuthRouter } from './web/dashboardAuth.js';
 import { stripeRouter } from './web/stripePayments.js';
+import { topggRouter } from './web/topggWebhook.js';
 import { setClient } from './utils/clientRef.js';
 import { restoreTTSSessions } from './commands/Voice/tts.js';
 
@@ -173,6 +174,8 @@ class PhantomBot extends Client {
     app.use(robloxOAuthRouter);
     app.use(dashboardAuthRouter);
     app.use(stripeRouter);
+    app.use(topggRouter);
+    app.set('discordClient', this);
     const configuredPort = Number(this.config.api?.port || process.env.PORT || 3000);
     const maxPortRetryAttempts = Number(process.env.PORT_RETRY_ATTEMPTS || 5);
     const host = process.env.WEB_HOST || '0.0.0.0';
@@ -686,6 +689,80 @@ class PhantomBot extends Client {
     cron.schedule('0 3 * * *', () => this.autoCloseStaleTickets());
     // Fire due reminders every minute
     cron.schedule('* * * * *', () => checkReminders(this));
+    // Expire premium trials daily at 4am
+    cron.schedule('0 4 * * *', () => this.expireTrials());
+  }
+
+  // Expire premium trials and notify guild owners
+  async expireTrials() {
+    try {
+      const { db } = await import('./utils/database.js');
+      const { EmbedBuilder } = await import('discord.js');
+      const now = Date.now();
+      const WARNING_MS = 24 * 60 * 60 * 1000; // warn 24h before expiry
+
+      // Scan all subscription keys
+      const keys = await db.list('subscription:').catch(() => []);
+      for (const key of keys) {
+        try {
+          const sub = await db.get(key);
+          if (!sub?.isTrial || sub.status !== 'trialing') continue;
+
+          const guildId = key.replace('subscription:', '');
+          const trialEnd = sub.trialEnd || 0;
+
+          // Send 24h warning
+          if (!sub.warningSent && trialEnd - now <= WARNING_MS && trialEnd > now) {
+            sub.warningSent = true;
+            await db.set(key, sub);
+            try {
+              const guild = this.guilds.cache.get(guildId);
+              if (guild) {
+                const owner = await this.users.fetch(guild.ownerId);
+                await owner.send({
+                  embeds: [new EmbedBuilder()
+                    .setTitle('⚠️ Your Premium Trial Expires Tomorrow')
+                    .setDescription(
+                      `Your 7-day Premium trial for **${guild.name}** expires <t:${Math.floor(trialEnd / 1000)}:R>.\n\n` +
+                      `To keep access to rank management, auto-rank, audit logs, and more, subscribe at:\nhttps://phantom1.up.railway.app/dashboard`
+                    )
+                    .setColor(0xffa500)
+                    .setTimestamp()
+                  ],
+                });
+              }
+            } catch {}
+          }
+
+          // Expire the trial
+          if (trialEnd <= now) {
+            await db.set(key, { tier: 'free', status: 'canceled', wasTrialUser: true });
+            logger.info(`[Trial] Expired trial for guild ${guildId}`);
+            try {
+              const guild = this.guilds.cache.get(guildId);
+              if (guild) {
+                const owner = await this.users.fetch(guild.ownerId);
+                await owner.send({
+                  embeds: [new EmbedBuilder()
+                    .setTitle('⏰ Your Premium Trial Has Ended')
+                    .setDescription(
+                      `Your free trial for **${guild.name}** has expired and the server has returned to the Free plan.\n\n` +
+                      `Subscribe to keep Premium features:\nhttps://phantom1.up.railway.app/dashboard`
+                    )
+                    .setColor(0xed4245)
+                    .setTimestamp()
+                  ],
+                });
+              }
+            } catch {}
+          }
+        } catch (err) {
+          logger.debug(`[Trial] Error processing key ${key}: ${err.message}`);
+        }
+      }
+    } catch (err) {
+      logger.error('[Trial] expireTrials error:', err.message);
+    }
   }
 
   // Auto-close open tickets older than 3 days, auto-delete closed tickets older than 7 days
