@@ -27,10 +27,10 @@ async function createTTSResource(text) {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Phantom/1.0)' },
   });
   if (!resp.ok) throw new Error(`Google TTS HTTP ${resp.status}`);
-  const mp3 = Buffer.from(await resp.arrayBuffer());
-  if (mp3.length < 100) throw new Error('Google TTS returned empty audio');
 
-  return createAudioResource(Readable.from(mp3), {
+  // Stream the MP3 response directly to @discordjs/voice via ffmpeg
+  const nodeStream = Readable.fromWeb(resp.body);
+  return createAudioResource(nodeStream, {
     inputType: StreamType.Arbitrary,
   });
 }
