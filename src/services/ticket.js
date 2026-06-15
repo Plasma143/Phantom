@@ -73,6 +73,7 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
   try {
     const config = await getGuildConfig(guild.client, guild.id);
     const ticketConfig = config.tickets || {};
+    const ticketSettings = config.ticketSettings || {};
     
     const maxTicketsPerUser = config.maxTicketsPerUser ?? 3;
     const currentTicketCount = await getUserTicketCount(guild.id, member.id);
@@ -204,8 +205,17 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
       );
     }
     
-    const staffMention = config.ticketStaffRoleId ? ` <@&${config.ticketStaffRoleId}>` : '';
-    const messageContent = `${member.toString()}${staffMention}`;
+    // Build ping mentions: legacy single role + new multi-role from dashboard settings
+    const pingRoleIds = Array.isArray(ticketSettings.pingRoleIds) ? ticketSettings.pingRoleIds : [];
+    const legacyRoleId = config.ticketStaffRoleId;
+    const allPingIds = legacyRoleId && !pingRoleIds.includes(legacyRoleId)
+      ? [...pingRoleIds, legacyRoleId]
+      : pingRoleIds;
+    const roleMentions = allPingIds.map(id => `<@&${id}>`).join(' ');
+    const welcomeMsg = (ticketSettings.welcomeMessage || '')
+      .replace('{user}', member.toString())
+      .trim();
+    const messageContent = [member.toString(), roleMentions, welcomeMsg].filter(Boolean).join('\n');
     
     const ticketMessage = await channel.send({ 
       content: messageContent,
@@ -1240,6 +1250,3 @@ export async function updateTicketPriority(channel, priority, updater) {
     };
   }
 }
-
-
-
