@@ -17,6 +17,7 @@ import {
 } from '../services/giveawayService.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { getUserLevelData } from '../utils/database.js';
+import { getSubscription, getTier, isOwner } from '../web/stripePayments.js';
 
 
 
@@ -86,8 +87,13 @@ export const giveawayJoinHandler = {
                     });
                 }
 
+                // ── Account age & message requirements (Premium only) ─────────
+                const sub  = await getSubscription(interaction.guildId);
+                const tier = isOwner(interaction.guild?.ownerId) ? 'enterprise' : getTier(sub);
+                const isPremium = tier !== 'free';
+
                 // ── Account age check ─────────────────────────────────────────
-                const minAgeDays = giveaway.minAccountAgeDays ?? 7;
+                const minAgeDays = isPremium ? (giveaway.minAccountAgeDays ?? 7) : 0;
                 if (minAgeDays > 0) {
                     const accountAgeDays = Math.floor((Date.now() - interaction.user.createdTimestamp) / 86_400_000);
                     if (accountAgeDays < minAgeDays) {
@@ -102,7 +108,7 @@ export const giveawayJoinHandler = {
                 }
 
                 // ── Server message count check ────────────────────────────────
-                const minMessages = giveaway.minMessages ?? 10;
+                const minMessages = isPremium ? (giveaway.minMessages ?? 10) : 0;
                 if (minMessages > 0) {
                     const levelData = await getUserLevelData(client, interaction.guildId, userId);
                     const userMessages = levelData.messageCount || 0;
