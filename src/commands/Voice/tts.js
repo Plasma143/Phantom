@@ -86,6 +86,8 @@ async function playNext(guildId) {
     logger.error('[TTS] generation error:', e.message);
     s.playing = false;
     try { if (tmpFile && existsSync(tmpFile)) unlinkSync(tmpFile); } catch {}
+    // Post error visibly so we can debug
+    s.textChannel?.send(`⚠️ TTS error: \`${e.message}\``).catch(() => {});
     playNext(guildId);
   }
 }
@@ -96,6 +98,7 @@ export function handleTTSMessage(message) {
   if (!s || message.channel.id !== s.textChannelId || message.author.bot) return;
   const text = message.content?.trim();
   if (!text) return;
+  s.textChannel = message.channel;
   s.queue.push({ username: message.member?.displayName || message.author.username, text });
   playNext(message.guildId);
 }
@@ -118,11 +121,11 @@ export default {
 
     if (sub === 'debug') {
       const report = generateDependencyReport();
-      const engine = getEngine() || 'none (will use Google TTS)';
-      return interaction.reply({
-        content: `\`\`\`\n${report}\nTTS Engine: ${engine}\n\`\`\``,
-        flags: MessageFlags.Ephemeral,
-      });
+      const engine = getEngine() || 'none (Google TTS fallback)';
+      // Post visibly so we can screenshot it
+      return interaction.reply(
+        `**TTS Dependency Report:**\n\`\`\`\n${report}\nLocal TTS Engine: ${engine}\n\`\`\``
+      );
     }
 
     if (sub === 'join') {
