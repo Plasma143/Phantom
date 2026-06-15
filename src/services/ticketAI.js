@@ -15,12 +15,12 @@ const SKIP_CATEGORIES = ['partnership', 'appeal'];
 // ── Knowledge base ────────────────────────────────────────────────────────────
 const FAQ = [
   {
-    keywords: ['what is phantom', 'what does phantom do', 'who are you', 'what are you', 'about phantom', 'tell me about'],
-    answer: `**Phantom** is an all-in-one Discord bot built for Roblox communities.\n\nIt links your Roblox group to your Discord server and handles:\n• Member verification & role sync based on Roblox group rank\n• Rank management from a web dashboard\n• Audit logs, moderation, leveling, economy, tickets, music, and more\n\n**Dashboard:** https://phantom1.up.railway.app/dashboard\n**Invite:** https://discord.com/oauth2/authorize?client_id=1515029322061054063&permissions=8&scope=bot%20applications.commands`,
+    keywords: ['your features', 'what can you', 'capabilities', 'what commands', 'what do you offer', 'list of features', 'what features'],
+    answer: `**Phantom's features include:**\n\n🆓 **Free:**\n• Roblox verification & role sync\n• Moderation, economy, leveling, tickets, music, TTS\n• Security & raid protection, event points\n\n💜 **Premium ($7/mo AUD):**\n• Dashboard rank management\n• Auto-rank from promotion logs\n• Audit logs & member tab\n\n👑 **Enterprise ($15/mo AUD):**\n• Multiple Roblox group bindings\n• Bulk ranking, scheduled sync, custom branding\n\nSee full details at: https://phantom1.up.railway.app/dashboard`,
   },
   {
-    keywords: ['features', 'what can', 'capabilities', 'commands', 'what do you offer'],
-    answer: `**Phantom's features include:**\n\n🆓 **Free:**\n• Roblox verification & role sync\n• Moderation, economy, leveling, tickets, music, TTS\n• Security & raid protection, event points\n\n💜 **Premium ($7/mo AUD):**\n• Dashboard rank management\n• Auto-rank from promotion logs\n• Audit logs & member tab\n\n👑 **Enterprise ($15/mo AUD):**\n• Multiple Roblox group bindings\n• Bulk ranking, scheduled sync, custom branding\n\nSee full details at: https://phantom1.up.railway.app/dashboard`,
+    keywords: ['what is phantom', 'what does phantom do', 'who are you', 'what are you', 'about phantom', 'tell me about'],
+    answer: `**Phantom** is an all-in-one Discord bot built for Roblox communities.\n\nIt links your Roblox group to your Discord server and handles:\n• Member verification & role sync based on Roblox group rank\n• Rank management from a web dashboard\n• Audit logs, moderation, leveling, economy, tickets, music, and more\n\n**Dashboard:** https://phantom1.up.railway.app/dashboard\n**Invite:** https://discord.com/oauth2/authorize?client_id=1515029322061054063&permissions=8&scope=bot%20applications.commands`,
   },
   {
     keywords: ['price', 'pricing', 'cost', 'how much', 'subscription', 'premium', 'enterprise', 'free'],
