@@ -986,6 +986,21 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
             <button type="submit" style="${buttonStyle}">Save Auto-Rank Settings</button>
           </form>
           `}
+
+          <hr style="border:none; border-top:1px solid #2b2d31; margin:24px 0;" />
+          <p style="font-weight:700; margin:0 0 4px; font-size:15px;">🚪 Auto-Demotion on Leave</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 14px; line-height:1.6;">When a member leaves the Discord server, Phantom will automatically set their Roblox group rank to the exile rank you specify. Requires a linked Roblox account and Open Cloud API key.</p>
+          <form method="POST" action="/dashboard/server/${guildId}/auto-demote">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+              <input type="checkbox" name="enabled" id="autoDemoteEnabled" value="1" ${roblox.autoDemote?.enabled ? 'checked' : ''} style="width:16px; height:16px; accent-color:#ed4245; cursor:pointer;" />
+              <label for="autoDemoteEnabled" style="color:#fff; font-size:14px; font-weight:600; cursor:pointer;">Enable auto-demotion on leave</label>
+            </div>
+            <p style="color:#949ba4; font-size:13px; margin:0 0 6px;">Exile Rank ID <span style="color:#5b6472;">(the rank number to set — e.g. 1 for Guest, 0 to exile)</span></p>
+            <div style="display:flex; gap:8px; margin-bottom:16px;">
+              <input type="number" name="exileRankId" value="${roblox.autoDemote?.exileRankId ?? 0}" min="0" max="255" style="width:120px; ${fieldStyle}" />
+              <button type="submit" style="${buttonStyle}">Save</button>
+            </div>
+          </form>
         </div>
 
         <div id="tab-join-requests" style="display:none; ${PANEL}">
@@ -2135,6 +2150,22 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/auto-rank', async (req, res
   });
 
   res.redirect(`/dashboard/server/${guildId}?success=Auto-rank+settings+saved#rank-management`);
+});
+
+dashboardAuthRouter.post('/dashboard/server/:guildId/auto-demote', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const enabled     = req.body.enabled === '1';
+  const exileRankId = parseInt(req.body.exileRankId ?? 0, 10);
+  const roblox      = await getConfigValue({ db }, guildId, 'roblox', {});
+
+  await updateGuildConfig({ db }, guildId, {
+    roblox: { ...roblox, autoDemote: { enabled, exileRankId } },
+  });
+
+  res.redirect(`/dashboard/server/${guildId}?success=Auto-demotion+settings+saved#rank-management`);
 });
 
 dashboardAuthRouter.post('/dashboard/server/:guildId/open-cloud-key', async (req, res) => {
