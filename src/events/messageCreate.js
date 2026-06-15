@@ -8,6 +8,7 @@ import { getRobloxUserByUsername, getGroupRoles, updateGroupMemberRank } from '.
 import { parsePromotionLog, applyFormat, DEFAULT_LOG_FORMAT } from '../services/promotionParser.js';
 import { db } from '../utils/database.js';
 import { handleTTSMessage } from '../commands/Voice/tts.js';
+import { handleTicketAIReply } from '../services/ticketAI.js';
 
 const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
 const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
@@ -19,6 +20,7 @@ export default {
       if (message.author.bot || !message.guild) return;
 
       handleTTSMessage(message);
+      handleTicketAIReply(message).catch(() => {});
       await handleLeveling(message, client);
       await handleAutoRank(message, client);
     } catch (error) {
