@@ -1,64 +1,118 @@
-// src/commands/Logging/starboard.js
-// Setup command for the starboard feature.
-// The actual reposting logic lives in src/events/messageReactionAdd.js
-import { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, MessageFlags, ChannelType } from 'discord.js';
-import { errorEmbed, successEmbed, infoEmbed } from '../../utils/embeds.js';
-import { getGuildConfig, updateGuildConfig } from '../../services/guildConfig.js';
+import { SlashCommandBuilder, PermissionFlagsBits, ChannelType } from 'discord.js';
+import { errorEmbed } from '../../utils/embeds.js';
+import { logger } from '../../utils/logger.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 
+import dashboard from './modules/logging_dashboard.js';
+import setchannel from './modules/logging_setchannel.js';
+import filter from './modules/logging_filter.js';
+
 export default {
-  data: new SlashCommandBuilder()
-    .setName('starboard')
-    .setDescription('Configure the starboard')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .setDMPermission(false)
-    .addSubcommand(s => s.setName('setup').setDescription('Enable starboard and set the channel')
-      .addChannelOption(o => o.setName('channel').setDescription('Channel to post starred messages in').setRequired(true).addChannelTypes(ChannelType.GuildText))
-      .addIntegerOption(o => o.setName('threshold').setDescription('Number of ⭐ reactions needed (default: 3)').setMinValue(1).setMaxValue(25))
-    )
-    .addSubcommand(s => s.setName('disable').setDescription('Disable the starboard'))
-    .addSubcommand(s => s.setName('info').setDescription('Show current starboard settings')),
+    data: new SlashCommandBuilder()
+        .setName('logging')
+        .setDescription('Manage audit logging for this server.')
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+        .setDMPermission(false)
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName('dashboard')
+                .setDescription('Open the interactive logging dashboard — view status and toggle event categories.'),
+        )
+        .addSubcommand((subcommand) =>
+            subcommand
+                .setName('setchannel')
+                .setDescription('Set the audit log channel for this server.')
+                .addChannelOption((option) =>
+                    option
+                        .setName('channel')
+                        .setDescription('The text channel for audit logs.')
+                        .addChannelTypes(ChannelType.GuildText)
+                        .setRequired(false),
+                )
+                .addBooleanOption((option) =>
+                    option
+                        .setName('disable')
+                        .setDescription('Set to True to disable audit logging entirely.')
+                        .setRequired(false),
+                ),
+        )
+        .addSubcommandGroup((group) =>
+            group
+                .setName('filter')
+                .setDescription('Manage the log ignore list (users and channels to skip).')
+                .addSubcommand((subcommand) =>
+                    subcommand
+                        .setName('add')
+                        .setDescription('Add a user or channel to the log ignore list.')
+                        .addStringOption((option) =>
+                            option
+                                .setName('type')
+                                .setDescription('Whether to ignore a user or channel.')
+                                .setRequired(true)
+                                .addChoices(
+                                    { name: 'User', value: 'user' },
+                                    { name: 'Channel', value: 'channel' },
+                                ),
+                        )
+                        .addStringOption((option) =>
+                            option
+                                .setName('id')
+                                .setDescription('The ID of the user or channel to ignore.')
+                                .setRequired(true),
+                        ),
+                )
+                .addSubcommand((subcommand) =>
+                    subcommand
+                        .setName('remove')
+                        .setDescription('Remove a user or channel from the log ignore list.')
+                        .addStringOption((option) =>
+                            option
+                                .setName('type')
+                                .setDescription('Whether this is a user or channel.')
+                                .setRequired(true)
+                                .addChoices(
+                                    { name: 'User', value: 'user' },
+                                    { name: 'Channel', value: 'channel' },
+                                ),
+                        )
+                        .addStringOption((option) =>
+                            option
+                                .setName('id')
+                                .setDescription('The ID of the user or channel to remove from the ignore list.')
+                                .setRequired(true),
+                        ),
+                ),
+        ),
 
-  category: 'logging',
+    async execute(interaction, config, client) {
+        try {
+            // setchannel and filter both need a reply deferred before their logic runs
+            const subcommandGroup = interaction.options.getSubcommandGroup(false);
+            const subcommand = interaction.options.getSubcommand();
 
-  async execute(interaction, config, client) {
-    const sub = interaction.options.getSubcommand();
-    const guildConfig = await getGuildConfig(client, interaction.guildId);
+            if (subcommand === 'dashboard') {
+                return await dashboard.execute(interaction, config, client);
+            }
 
-    if (sub === 'setup') {
-      const channel   = interaction.options.getChannel('channel');
-      const threshold = interaction.options.getInteger('threshold') ?? 3;
-      await updateGuildConfig(interaction.guildId, {
-        starboardChannelId: channel.id,
-        starboardThreshold: threshold,
-        starboardEnabled:   true,
-      });
-      return InteractionHelper.safeReply(interaction, {
-        embeds: [successEmbed('Starboard enabled!', `Posting to ${channel} when a message reaches **${threshold} ⭐**`)],
-        flags: MessageFlags.Ephemeral,
-      });
-    }
+            await InteractionHelper.safeDefer(interaction);
 
-    if (sub === 'disable') {
-      await updateGuildConfig(interaction.guildId, { starboardEnabled: false });
-      return InteractionHelper.safeReply(interaction, {
-        embeds: [successEmbed('Starboard disabled.')],
-        flags: MessageFlags.Ephemeral,
-      });
-    }
+            if (subcommand === 'setchannel') {
+                return await setchannel.execute(interaction, config, client);
+            }
 
-    if (sub === 'info') {
-      const enabled   = guildConfig.starboardEnabled;
-      const channel   = guildConfig.starboardChannelId ? `<#${guildConfig.starboardChannelId}>` : 'Not set';
-      const threshold = guildConfig.starboardThreshold ?? 3;
-      return InteractionHelper.safeReply(interaction, {
-        embeds: [infoEmbed('Starboard Settings', [
-          `**Status:** ${enabled ? '🟢 Enabled' : '🔴 Disabled'}`,
-          `**Channel:** ${channel}`,
-          `**Threshold:** ${threshold} ⭐`,
-        ].join('\n'))],
-        flags: MessageFlags.Ephemeral,
-      });
-    }
-  },
+            if (subcommandGroup === 'filter') {
+                return await filter.execute(interaction, config, client);
+            }
+
+            await InteractionHelper.safeEditReply(interaction, {
+                embeds: [errorEmbed('Unknown Subcommand', 'This subcommand is not recognised.')],
+            });
+        } catch (error) {
+            logger.error('logging command error:', error);
+            await InteractionHelper.safeReply(interaction, {
+                embeds: [errorEmbed('Error', 'An unexpected error occurred.')],
+                ephemeral: true,
+            }).catch(() => {});
+        }
+    },
 };
