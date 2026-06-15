@@ -4,8 +4,12 @@ import { logEvent } from '../../utils/moderation.js';
 import { logger } from '../../utils/logger.js';
 import { checkRateLimit } from '../../utils/rateLimiter.js';
 import { getColor } from '../../config/bot.js';
-
+import { getSubscription, getTier, isOwner } from '../../web/stripePayments.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
+
+// Purge limits by tier
+const PURGE_LIMIT = { free: 100, premium: 500, enterprise: 1000 };
+
 export default {
     data: new SlashCommandBuilder()
     .setName("purge")
@@ -13,7 +17,7 @@ export default {
     .addIntegerOption((option) =>
       option
         .setName("amount")
-        .setDescription("Number of messages (1-100)")
+        .setDescription("Number of messages (1-100 free · 1-500 premium · 1-1000 enterprise)")
         .setRequired(true),
     )
 .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
@@ -40,15 +44,22 @@ export default {
         ],
       });
 
+    // Get tier and max limit
+    const sub  = await getSubscription(interaction.guildId);
+    const tier = isOwner(interaction.user.id) ? 'enterprise' : getTier(sub);
+    const maxAmount = PURGE_LIMIT[tier] ?? PURGE_LIMIT.free;
+
     const amount = interaction.options.getInteger("amount");
     const channel = interaction.channel;
 
-    if (amount < 1 || amount > 100)
+    if (amount < 1 || amount > maxAmount)
       return await InteractionHelper.safeEditReply(interaction, {
         embeds: [
           errorEmbed(
             "Invalid Amount",
-            "Please specify a number between 1 and 100.",
+            tier === 'free'
+              ? `Free plan allows 1–100 messages. Upgrade to Premium (500) or Enterprise (1000) for higher limits.`
+              : `Please specify a number between 1 and ${maxAmount}.`,
           ),
         ],
       });
@@ -69,9 +80,19 @@ export default {
         });
       }
 
-      const fetched = await channel.messages.fetch({ limit: amount });
-      const deleted = await channel.bulkDelete(fetched, true);
-      const deletedCount = deleted.size;
+      // Discord bulkDelete only handles 100 at a time — loop for higher amounts
+      let deletedCount = 0;
+      let remaining = amount;
+      while (remaining > 0) {
+        const batchSize = Math.min(remaining, 100);
+        const fetched = await channel.messages.fetch({ limit: batchSize });
+        if (fetched.size === 0) break;
+        const deleted = await channel.bulkDelete(fetched, true);
+        deletedCount += deleted.size;
+        remaining -= batchSize;
+        if (deleted.size < batchSize) break; // no more deletable messages
+        if (remaining > 0) await new Promise(r => setTimeout(r, 1000)); // avoid rate limits
+      }
 
       const purgeEmbed = createEmbed(
         "🗑️ Messages Purged (Action Log)",
@@ -130,6 +151,3 @@ flags: MessageFlags.Ephemeral,
     }
   }
 };
-
-
-
