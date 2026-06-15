@@ -2724,7 +2724,8 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/ticket-settings/auto-reply'
     return res.redirect(`/dashboard/server/${guildId}?error=Premium+required#tickets`);
   }
 
-  const enabled = req.body.enabled === 'true';
+  const raw = req.body.enabled;
+  const enabled = Array.isArray(raw) ? raw.includes('true') : raw === 'true';
   const current = await getConfigValue({ db }, guildId, 'ticketSettings', {});
   await updateGuildConfig({ db }, guildId, { ticketSettings: { ...current, autoReplyEnabled: enabled } });
   res.redirect(`/dashboard/server/${guildId}?success=Auto-reply+${enabled?'enabled':'disabled'}#tickets`);
