@@ -17,6 +17,7 @@ import { getFromDb, setInDb } from '../../utils/database.js';
 import { db } from '../../utils/database.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { logger } from '../../utils/logger.js';
+import { canDm } from './notifications.js';
 
 function requestKey(guildId, id) { return `rankreq:${guildId}:${id}`; }
 function counterKey(guildId)     { return `rankreq_counter:${guildId}`; }
@@ -96,7 +97,7 @@ export async function handleRankRequestButton(interaction, client) {
 
       // DM the member
       const user = await client.users.fetch(req.userId).catch(() => null);
-      if (user) {
+      if (user && await canDm(req.userId, 'rank')) {
         await user.send({
           embeds: [successEmbed('Rank Request Approved!', `Your request for **${req.targetRankName}** in **${interaction.guild.name}** has been approved and your rank has been updated.`)],
         }).catch(() => {});
@@ -118,7 +119,7 @@ export async function handleRankRequestButton(interaction, client) {
     await setInDb(requestKey(guildId, reqId), req);
 
     const user = await client.users.fetch(req.userId).catch(() => null);
-    if (user) {
+    if (user && await canDm(req.userId, 'rank')) {
       await user.send({
         embeds: [errorEmbed('Rank Request Denied', `Your request for **${req.targetRankName}** in **${interaction.guild.name}** was denied.`)],
       }).catch(() => {});
