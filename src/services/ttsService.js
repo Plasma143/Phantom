@@ -1,12 +1,11 @@
 // src/services/ttsService.js
 //
-// Offline Text-to-Speech service using SVOX Pico TTS (pico2wave CLI).
+// Offline Text-to-Speech service using espeak-ng CLI.
 //
 // No API keys, no billing, no network calls — runs entirely on-device.
-// Requires the libttspico system packages installed in the container/host
-// (libttspico0, libttspico-data, libttspico-utils).
+// Requires the espeak-ng package installed in the container/host.
 //
-// pico2wave produces a WAV file which discord.js can play directly via ffmpeg.
+// espeak-ng produces a WAV file which discord.js can play directly via ffmpeg.
 
 import { existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
@@ -18,9 +17,9 @@ const execFile = promisify(execFileCb);
 
 // ── Synthesise text → WAV temp file path ─────────────────────────────────────
 /**
- * Synthesises `text` using SVOX Pico TTS (pico2wave CLI, offline, no API key
- * required) and writes the resulting WAV to a temporary file. Returns the file
- * path so the caller can stream it to Discord and delete it afterwards.
+ * Synthesises `text` using espeak-ng (offline, no API key required) and writes
+ * the resulting WAV to a temporary file. Returns the file path so the caller
+ * can stream it to Discord and delete it afterwards.
  *
  * @param {string} text  Plain text to synthesise.
  * @returns {Promise<string>}  Absolute path to the temporary WAV file.
@@ -28,13 +27,13 @@ const execFile = promisify(execFileCb);
 export async function synthesizeSpeech(text) {
   const tmpFile = join('/tmp', `phantom_tts_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
 
-  await execFile('pico2wave', ['-l', 'en-US', '-w', tmpFile, text]);
+  await execFile('espeak-ng', ['-w', tmpFile, text]);
 
   if (!existsSync(tmpFile)) {
-    throw new Error('pico2wave did not produce an output file');
+    throw new Error('espeak-ng did not produce an output file');
   }
 
-  logger.debug(`[TTS_SERVICE] pico2wave wrote → ${tmpFile}`);
+  logger.debug(`[TTS_SERVICE] espeak-ng wrote → ${tmpFile}`);
   return tmpFile;
 }
 
