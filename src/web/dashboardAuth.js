@@ -381,24 +381,54 @@ function guildIconUrl(guild) {
 // appropriate response itself and returns null — callers should just
 // `return` if they get null back.
 // ---- Session cache (avoids hitting Discord API on every request) ----
-// Caches user+guilds for 5 minutes per token so rapid navigation doesn't trigger rate limits
-const sessionCache = new Map(); // token → { user, guilds, expiresAt }
-const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const sessionCache = new Map(); // token → { user, guilds, expiresAt, staleUntil }
+const SESSION_CACHE_TTL   = 10 * 60 * 1000; // 10 min fresh
+const SESSION_CACHE_STALE = 60 * 60 * 1000; // 60 min stale (used if Discord API fails)
 
 async function getSessionData(token) {
   const cached = sessionCache.get(token);
+
+  // Fresh cache hit — return immediately
   if (cached && cached.expiresAt > Date.now()) {
     return { user: cached.user, guilds: cached.guilds };
   }
-  const [userRes, userGuildsRes] = await Promise.all([
-    fetch('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${token}` } }),
-    fetch('https://discord.com/api/users/@me/guilds', { headers: { Authorization: `Bearer ${token}` } }),
-  ]);
-  if (!userRes.ok || !userGuildsRes.ok) return null;
-  const user = await userRes.json();
-  const guilds = await userGuildsRes.json();
-  sessionCache.set(token, { user, guilds, expiresAt: Date.now() + SESSION_CACHE_TTL });
-  return { user, guilds };
+
+  try {
+    const [userRes, userGuildsRes] = await Promise.all([
+      fetch('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${token}` } }),
+      fetch('https://discord.com/api/users/@me/guilds', { headers: { Authorization: `Bearer ${token}` } }),
+    ]);
+
+    // Token explicitly invalid (401) — must log out
+    if (userRes.status === 401 || userGuildsRes.status === 401) {
+      sessionCache.delete(token);
+      return null;
+    }
+
+    // Rate limited or temporary Discord error — use stale cache if available
+    if (!userRes.ok || !userGuildsRes.ok) {
+      if (cached && cached.staleUntil > Date.now()) {
+        return { user: cached.user, guilds: cached.guilds };
+      }
+      return null;
+    }
+
+    const user = await userRes.json();
+    const guilds = await userGuildsRes.json();
+    sessionCache.set(token, {
+      user,
+      guilds,
+      expiresAt:  Date.now() + SESSION_CACHE_TTL,
+      staleUntil: Date.now() + SESSION_CACHE_STALE,
+    });
+    return { user, guilds };
+  } catch {
+    // Network error — use stale cache if available
+    if (cached && cached.staleUntil > Date.now()) {
+      return { user: cached.user, guilds: cached.guilds };
+    }
+    return null;
+  }
 }
 
 async function requireGuildAccess(req, res, guildId) {
@@ -413,7 +443,6 @@ async function requireGuildAccess(req, res, guildId) {
 
   if (!data) {
     clearCookie(res, 'dashboard_token');
-    sessionCache.delete(token);
     res.send(loginPrompt('Your session expired — please log in again.'));
     return null;
   }
@@ -563,7 +592,6 @@ dashboardAuthRouter.get('/dashboard', async (req, res) => {
 
     if (!sessionData) {
       clearCookie(res, 'dashboard_token');
-      sessionCache.delete(token);
       return res.send(loginPrompt('Your session expired — please log in again.'));
     }
 
