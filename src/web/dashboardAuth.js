@@ -380,6 +380,27 @@ function guildIconUrl(guild) {
 // Checks the logged-in user can manage `guildId`. On failure, sends an
 // appropriate response itself and returns null — callers should just
 // `return` if they get null back.
+// ---- Session cache (avoids hitting Discord API on every request) ----
+// Caches user+guilds for 5 minutes per token so rapid navigation doesn't trigger rate limits
+const sessionCache = new Map(); // token → { user, guilds, expiresAt }
+const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function getSessionData(token) {
+  const cached = sessionCache.get(token);
+  if (cached && cached.expiresAt > Date.now()) {
+    return { user: cached.user, guilds: cached.guilds };
+  }
+  const [userRes, userGuildsRes] = await Promise.all([
+    fetch('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${token}` } }),
+    fetch('https://discord.com/api/users/@me/guilds', { headers: { Authorization: `Bearer ${token}` } }),
+  ]);
+  if (!userRes.ok || !userGuildsRes.ok) return null;
+  const user = await userRes.json();
+  const guilds = await userGuildsRes.json();
+  sessionCache.set(token, { user, guilds, expiresAt: Date.now() + SESSION_CACHE_TTL });
+  return { user, guilds };
+}
+
 async function requireGuildAccess(req, res, guildId) {
   const token = getCookie(req, 'dashboard_token');
 
@@ -388,23 +409,16 @@ async function requireGuildAccess(req, res, guildId) {
     return null;
   }
 
-  const [userRes, userGuildsRes] = await Promise.all([
-    fetch('https://discord.com/api/users/@me', {
-      headers: { Authorization: `Bearer ${token}` },
-    }),
-    fetch('https://discord.com/api/users/@me/guilds', {
-      headers: { Authorization: `Bearer ${token}` },
-    }),
-  ]);
+  const data = await getSessionData(token);
 
-  if (!userRes.ok || !userGuildsRes.ok) {
+  if (!data) {
     clearCookie(res, 'dashboard_token');
+    sessionCache.delete(token);
     res.send(loginPrompt('Your session expired — please log in again.'));
     return null;
   }
 
-  const user = await userRes.json();
-  const userGuilds = await userGuildsRes.json();
+  const { user, guilds: userGuilds } = data;
   const guild = userGuilds.find((g) => g.id === guildId);
 
   if (!guild || !canManage(guild)) {
@@ -545,25 +559,18 @@ dashboardAuthRouter.get('/dashboard', async (req, res) => {
   }
 
   try {
-    const [userRes, userGuildsRes, botGuildsRes] = await Promise.all([
-      fetch('https://discord.com/api/users/@me', {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-      fetch('https://discord.com/api/users/@me/guilds', {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-      fetch('https://discord.com/api/users/@me/guilds', {
-        headers: { Authorization: `Bot ${BOT_TOKEN}` },
-      }),
-    ]);
+    const sessionData = await getSessionData(token);
 
-    if (!userRes.ok || !userGuildsRes.ok) {
+    if (!sessionData) {
       clearCookie(res, 'dashboard_token');
+      sessionCache.delete(token);
       return res.send(loginPrompt('Your session expired — please log in again.'));
     }
 
-    const user = await userRes.json();
-    const userGuilds = await userGuildsRes.json();
+    const { user, guilds: userGuilds } = sessionData;
+    const botGuildsRes = await fetch('https://discord.com/api/users/@me/guilds', {
+      headers: { Authorization: `Bot ${BOT_TOKEN}` },
+    });
     const botGuilds = botGuildsRes.ok ? await botGuildsRes.json() : [];
     const botGuildIds = new Set(botGuilds.map((g) => g.id));
 
