@@ -257,6 +257,13 @@ export default {
             return;
           }
 
+          // Notification panel button
+          if (interaction.customId === 'notif_open_panel') {
+            const { handleNotifPanelButton } = await import('../commands/Core/notifications.js');
+            await handleNotifPanelButton(interaction).catch(err => logger.error('[Notif] panel error:', err.message));
+            return;
+          }
+
           // Suggestion panel button (opens modal)
           if (interaction.customId === 'suggest_open_modal') {
             const { handleSuggestionPanelButton } = await import('../commands/Community/suggest.js');
