@@ -4,6 +4,7 @@
 import { Router, json } from 'express';
 import EconomyService from '../services/economyService.js';
 import { logger } from '../utils/logger.js';
+import { canDm } from '../commands/Core/notifications.js';
 
 export const topggRouter = Router();
 
@@ -47,15 +48,17 @@ topggRouter.post('/topgg/webhook', json(), async (req, res) => {
     // DM the voter
     try {
       const user = await client.users.fetch(userId);
-      const weekendNote = isWeekend ? ' (weekend double reward!)' : '';
-      await user.send({
-        embeds: [{
-          title: '🗳️ Thanks for voting!',
-          description: `You voted for Phantom on Top.gg and received **$${reward.toLocaleString()} coins**${weekendNote} in ${rewarded} server${rewarded !== 1 ? 's' : ''}.\n\nVote again in 12 hours for another reward!\nhttps://top.gg/bot/1515029322061054063/vote`,
-          color: 0x7c3aed,
-          timestamp: new Date().toISOString(),
-        }],
-      });
+      if (await canDm(userId, 'votes')) {
+        const weekendNote = isWeekend ? ' (weekend double reward!)' : '';
+        await user.send({
+          embeds: [{
+            title: '🗳️ Thanks for voting!',
+            description: `You voted for Phantom on Top.gg and received **$${reward.toLocaleString()} coins**${weekendNote} in ${rewarded} server${rewarded !== 1 ? 's' : ''}.\n\nVote again in 12 hours for another reward!\nhttps://top.gg/bot/1515029322061054063/vote`,
+            color: 0x7c3aed,
+            timestamp: new Date().toISOString(),
+          }],
+        });
+      }
     } catch {
       // User has DMs closed — that's fine
     }
