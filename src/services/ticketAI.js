@@ -3,6 +3,7 @@
 // No API key needed — matches questions against Phantom's knowledge base.
 
 import { getTicketData } from '../utils/database.js';
+import { getGuildConfig } from '../services/guildConfig.js';
 import { logger } from '../utils/logger.js';
 
 // Staff active tracking — if staff replied recently, bot stays silent
@@ -97,6 +98,11 @@ async function isStaff(message) {
 export async function handleTicketAIReply(message) {
   try {
     if (!message.guild || message.author.bot) return;
+
+    // Check if auto-reply is enabled for this server (Premium feature)
+    const config = await getGuildConfig(message.client, message.guildId);
+    const ticketSettings = config.ticketSettings || {};
+    if (!ticketSettings.autoReplyEnabled) return;
 
     const ticketData = await getTicketData(message.guildId, message.channelId);
     if (!ticketData || ticketData.status === 'closed') return;
