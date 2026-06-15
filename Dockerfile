@@ -1,12 +1,15 @@
 FROM node:20-slim
 
-# Install ffmpeg for discord-player audio processing
+# Install ffmpeg, opus, and SVOX Pico TTS (offline TTS — no API key required)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     python3 \
     make \
     g++ \
     libopus-dev \
+    libttspico0 \
+    libttspico-data \
+    libttspico-utils \
   && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
