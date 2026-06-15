@@ -1,8 +1,9 @@
 // src/commands/Core/notifications.js
 // Lets users control which DM notifications they receive from Phantom.
-import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } from 'discord.js';
+import { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } from 'discord.js';
 import { getFromDb, setInDb } from '../../utils/database.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
+import { errorEmbed, successEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
 
 export const DM_CATEGORIES = {
@@ -69,7 +70,17 @@ function buildButtons(prefs) {
   return rows;
 }
 
-// ── Button handler ─────────────────────────────────────────────────────────────
+// ── Panel button handler (opens preferences for that user) ────────────────────
+export async function handleNotifPanelButton(interaction) {
+  const prefs = await getDmPrefs(interaction.user.id);
+  await interaction.reply({
+    embeds: [buildEmbed(prefs)],
+    components: buildButtons(prefs),
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+// ── Toggle button handler ─────────────────────────────────────────────────────
 export async function handleNotifToggle(interaction) {
   const [, category] = interaction.customId.split(':');
   const userId = interaction.user.id;
@@ -88,18 +99,56 @@ export async function handleNotifToggle(interaction) {
 export default {
   data: new SlashCommandBuilder()
     .setName('notifications')
-    .setDescription('Manage which DM notifications you receive from Phantom')
-    .setDMPermission(true),
+    .setDescription('Notification preferences')
+    .setDMPermission(false)
+    .addSubcommand(s => s.setName('setup')
+      .setDescription('Post the notification settings panel in this channel (admin only)')
+    )
+    .addSubcommand(s => s.setName('manage')
+      .setDescription('Manage your own notification preferences')
+    ),
 
   category: 'core',
 
-  async execute(interaction) {
-    const prefs = await getDmPrefs(interaction.user.id);
+  async execute(interaction, config, client) {
+    const sub = interaction.options.getSubcommand();
 
-    return InteractionHelper.safeReply(interaction, {
-      embeds: [buildEmbed(prefs)],
-      components: buildButtons(prefs),
-      flags: MessageFlags.Ephemeral,
-    });
+    if (sub === 'setup') {
+      if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+        return InteractionHelper.safeReply(interaction, {
+          embeds: [errorEmbed('Permission Denied', 'You need `Manage Server` to post the panel.')],
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      const panelEmbed = new EmbedBuilder()
+        .setTitle('🔔 Notification Settings')
+        .setDescription('Control which DMs you receive from Phantom.\n\nClick the button below to manage your preferences — only you can see your settings.')
+        .setColor(0x7c3aed)
+        .setFooter({ text: 'Phantom Notifications' });
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('notif_open_panel')
+          .setLabel('Manage Notifications')
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('🔔')
+      );
+
+      await interaction.channel.send({ embeds: [panelEmbed], components: [row] });
+      return InteractionHelper.safeReply(interaction, {
+        embeds: [successEmbed('Notification panel posted!')],
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
+    if (sub === 'manage') {
+      const prefs = await getDmPrefs(interaction.user.id);
+      return InteractionHelper.safeReply(interaction, {
+        embeds: [buildEmbed(prefs)],
+        components: buildButtons(prefs),
+        flags: MessageFlags.Ephemeral,
+      });
+    }
   },
 };
