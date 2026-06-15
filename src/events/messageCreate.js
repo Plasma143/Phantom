@@ -23,6 +23,7 @@ export default {
       handleTicketAIReply(message).catch(() => {});
       await handleLeveling(message, client);
       await handleAutoRank(message, client);
+      await handleAllianceAnnouncementSync(message, client).catch(() => {});
     } catch (error) {
       logger.error('Error in messageCreate event:', error);
     }
@@ -220,5 +221,47 @@ async function handleLeveling(message, client) {
     }
   } catch (error) {
     logger.error('Error handling leveling for message:', error);
+  }
+}
+
+// ── Alliance: sync announcements to allied servers ────────────────────────────
+import { getFromDb } from '../utils/database.js';
+import { EmbedBuilder } from 'discord.js';
+
+async function handleAllianceAnnouncementSync(message, client) {
+  // Only sync from channels named "announcements" or "announcement"
+  if (!message.channel.name?.includes('announcement')) return;
+  if (!message.content && !message.embeds.length) return;
+
+  const alliances = await getFromDb(`alliances:${message.guild.id}`, []);
+  const syncable  = alliances.filter(a => a.syncAnnouncements);
+  if (!syncable.length) return;
+
+  for (const alliance of syncable) {
+    try {
+      const partnerGuild = client.guilds.cache.get(alliance.partnerGuildId);
+      if (!partnerGuild) continue;
+
+      // Find their #announcements channel
+      const target = partnerGuild.channels.cache.find(c =>
+        c.name?.includes('announcement') && c.isTextBased()
+      );
+      if (!target) continue;
+
+      const embed = new EmbedBuilder()
+        .setAuthor({ name: `📢 ${message.guild.name}`, iconURL: message.guild.iconURL() })
+        .setDescription(message.content || null)
+        .setColor(0x5865f2)
+        .setTimestamp(message.createdAt);
+
+      if (message.attachments.size) {
+        const img = message.attachments.find(a => a.contentType?.startsWith('image/'));
+        if (img) embed.setImage(img.url);
+      }
+
+      await target.send({ embeds: [embed] });
+    } catch (err) {
+      // Don't let one failure break the rest
+    }
   }
 }
