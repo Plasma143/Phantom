@@ -231,6 +231,52 @@ const createTicketModalHandler = {
             `Your ticket has been created in ${result.channel}!`
           )]
         });
+
+        // ── Auto-reply based on ticket category ──────────────────────────────
+        const ticketChannel = result.channel;
+        if (ticketChannel && categoryValue === 'partnership') {
+          const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = await import('discord.js');
+
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId('partnership_accept')
+              .setLabel('Accept Partnership')
+              .setStyle(ButtonStyle.Success)
+              .setEmoji('✅'),
+            new ButtonBuilder()
+              .setCustomId('partnership_deny')
+              .setLabel('Deny Partnership')
+              .setStyle(ButtonStyle.Danger)
+              .setEmoji('❌'),
+          );
+
+          await ticketChannel.send({
+            embeds: [{
+              title: '🤝 Partnership Request',
+              description: [
+                'Thank you for your interest in partnering with **Phantom Studios**. A staff member will review your application shortly.',
+                '',
+                '**To help us process your request, please provide the following:**',
+                '> Your server name and a brief description of your community.',
+                '> Your Discord invite link.',
+                '> Your current member count.',
+                '> What you are looking for from this partnership.',
+                '> Confirmation that you are willing to post our advertisement in your server in return.',
+                '',
+                '**Partnership Requirements**',
+                '> Minimum 50 members.',
+                '> Active and well-moderated community.',
+                '> A clear purpose or niche.',
+                '> Professional server structure with rules in place.',
+                '',
+                'Please note that we reserve the right to decline any partnership application at our discretion.',
+              ].join('\n'),
+              color: 0x5865F2,
+              footer: { text: 'Phantom Studios Partnerships' },
+            }],
+            components: [row],
+          });
+        }
       } else {
         await interaction.editReply({
           embeds: [errorEmbed('Error', result.error || 'Failed to create ticket.')],
