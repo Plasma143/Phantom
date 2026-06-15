@@ -694,6 +694,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
     const isEnterprise = tier === 'enterprise';
     const security = { minAccountAgeDays: 0, newAccountAction: 'none', newAccountRoleId: null, newAccountLogChannel: null, raidProtection: false, raidThreshold: 10, raidWindowSeconds: 30, raidAction: 'lockdown', lockdownActive: false, ...(securityRaw || {}) };
     const joinRequestConfig = await getConfigValue({ db }, guildId, 'joinRequests', {});
+    const ticketSettings = await getConfigValue({ db }, guildId, 'ticketSettings', {});
 
     // Upgrade banner for free servers
     const boostBadge = boostDiscount
@@ -751,6 +752,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           <button id="btn-join-requests" style="${INACTIVE}" onclick="showTab('join-requests',this)">&#x1F4E8; Join Requests${!isPremium ? ' 🔒' : ''}</button>
           <button id="btn-rank-history" style="${INACTIVE}" onclick="showTab('rank-history',this)">📜 Rank History${!isEnterprise ? ' 💎' : ''}</button>
           <button id="btn-enterprise" style="${INACTIVE}" onclick="showTab('enterprise',this)">💎 Enterprise${!isEnterprise ? ' 💎' : ''}</button>
+          <button id="btn-tickets" style="${INACTIVE}" onclick="showTab('tickets',this)">🎫 Tickets</button>
           <button id="btn-messages" style="${INACTIVE}" onclick="showTab('messages',this)">📨 Messages</button>
           <button id="btn-security" style="${INACTIVE}" onclick="showTab('security',this)">🔐 Security</button>
         </div>
@@ -1517,6 +1519,60 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           `}
         </div>
 
+
+        <!-- ── Tab: Tickets ── -->
+        <div id="tab-tickets" style="display:none; ${PANEL}">
+          <p style="font-weight:700; font-size:18px; margin:0 0 4px;">🎫 Ticket Settings</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 24px;">Configure how Phantom handles support tickets in your server.</p>
+
+          <!-- Ping Roles (Free) -->
+          <div style="background:#111214; border:1px solid #2b2d31; border-radius:10px; padding:20px; margin-bottom:20px;">
+            <p style="font-weight:700; font-size:15px; margin:0 0 4px; color:#fff;">📣 Ping Roles on Ticket Creation</p>
+            <p style="color:#949ba4; font-size:13px; margin:0 0 16px;">These roles will be pinged when a new ticket is opened. Add up to 5 roles.</p>
+            <div id="ticketPingRolesList" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
+              ${(ticketSettings.pingRoleIds || []).map(rid => `
+                <span style="display:inline-flex; align-items:center; gap:6px; background:#1e1f22; border:1px solid #3f4147; border-radius:20px; padding:4px 10px; font-size:13px; color:#fff;">
+                  ${roleName(rid) || rid}
+                  <button onclick="removePingRole('${rid}')" style="background:none;border:none;color:#ed4245;cursor:pointer;font-size:14px;line-height:1;padding:0;">✕</button>
+                </span>`).join('')}
+              ${(ticketSettings.pingRoleIds || []).length === 0 ? '<span style="color:#888; font-size:13px;">No roles set</span>' : ''}
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <select id="newPingRole" style="${fieldStyle} flex:1;">
+                <option value="">-- Select a role to add --</option>
+                ${assignableRoles.filter(r => !(ticketSettings.pingRoleIds || []).includes(r.id)).map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
+              </select>
+              <button onclick="addPingRole()" style="padding:9px 16px; background:#5865f2; color:#fff; border:none; border-radius:8px; cursor:pointer; font-size:13px; font-weight:600;">Add</button>
+            </div>
+          </div>
+
+          <!-- Welcome Message (Free) -->
+          <div style="background:#111214; border:1px solid #2b2d31; border-radius:10px; padding:20px; margin-bottom:20px;">
+            <p style="font-weight:700; font-size:15px; margin:0 0 4px; color:#fff;">💬 Welcome Message</p>
+            <p style="color:#949ba4; font-size:13px; margin:0 0 12px;">Custom message sent below the ticket embed when a ticket is opened. Leave blank for none. Supports @mention, #channel, and {user} placeholder.</p>
+            <form method="POST" action="/dashboard/server/${guildId}/ticket-settings/welcome">
+              <textarea name="welcomeMessage" rows="3" placeholder="e.g. Welcome {user}! A staff member will be with you shortly." style="${fieldStyle} width:100%; resize:vertical; box-sizing:border-box; margin-bottom:10px;">${ticketSettings.welcomeMessage || ''}</textarea>
+              <button type="submit" style="padding:8px 18px; background:#5865f2; color:#fff; border:none; border-radius:8px; cursor:pointer; font-size:13px; font-weight:600;">Save</button>
+            </form>
+          </div>
+
+          <!-- Auto-Reply (Premium) -->
+          <div style="background:#111214; border:1px solid ${isPremium ? '#2b2d31' : '#7c3aed44'}; border-radius:10px; padding:20px; margin-bottom:20px; position:relative;">
+            ${!isPremium ? `<div style="position:absolute;top:12px;right:12px;background:#7c3aed;color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:99px;">PREMIUM</div>` : ''}
+            <p style="font-weight:700; font-size:15px; margin:0 0 4px; color:#fff;">🤖 Auto-Reply to Questions</p>
+            <p style="color:#949ba4; font-size:13px; margin:0 0 16px;">Phantom automatically answers common questions in tickets using a built-in FAQ about your bot. Stays silent if staff is active.</p>
+            ${isPremium ? `
+              <form method="POST" action="/dashboard/server/${guildId}/ticket-settings/auto-reply" style="display:flex; align-items:center; gap:12px;">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                  <input type="hidden" name="enabled" value="false" />
+                  <input type="checkbox" name="enabled" value="true" ${ticketSettings.autoReplyEnabled ? 'checked' : ''} onchange="this.form.submit()" style="width:16px; height:16px; cursor:pointer;" />
+                  <span style="color:#fff; font-size:14px;">${ticketSettings.autoReplyEnabled ? '✅ Enabled' : '⬜ Disabled'}</span>
+                </label>
+              </form>` : `
+              <p style="color:#888; font-size:13px; margin:0;">Upgrade to <a href="/upgrade/${guildId}?plan=premium" style="color:#c084fc;">Premium</a> to unlock auto-reply.</p>`}
+          </div>
+        </div>
+
         <!-- ── Tab: Messages ── -->
         <div id="tab-messages" style="display:none; ${PANEL}">
           <p style="font-weight:700; font-size:18px; margin:0 0 4px;">📨 Message Builder</p>
@@ -1691,7 +1747,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
         </div>
 
         <script>
-          var ALL_TABS=['overview','group-setup','rank-management','audit-logs','members','documents','verification','join-requests','rank-history','enterprise','messages','security'];
+          var ALL_TABS=['overview','group-setup','rank-management','audit-logs','members','documents','verification','join-requests','rank-history','enterprise','tickets','messages','security'];
           function showTab(name,btn){
             ALL_TABS.forEach(function(t){
               document.getElementById('tab-'+t).style.display='none';
@@ -1709,6 +1765,17 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
               if(btn)showTab(hash,btn);
             }
           });
+          async function addPingRole(){
+            var sel=document.getElementById('newPingRole');
+            var roleId=sel.value;
+            if(!roleId)return;
+            var r=await fetch('/dashboard/server/${guildId}/ticket-settings/ping-role',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add',roleId})});
+            if(r.ok)location.reload();else alert('Failed to add role');
+          }
+          async function removePingRole(roleId){
+            var r=await fetch('/dashboard/server/${guildId}/ticket-settings/ping-role',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'remove',roleId})});
+            if(r.ok)location.reload();else alert('Failed to remove role');
+          }
         </script>
       </div>
     `;
@@ -2571,6 +2638,61 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/security/config', async (re
   };
   await pgDb.set(`security:${guildId}`, updated);
   res.redirect(`/dashboard/server/${guildId}?success=Security+settings+saved#security`);
+});
+
+
+// ── Ticket Settings: Ping Roles (add/remove) ──────────────────────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/ticket-settings/ping-role', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const { action, roleId } = req.body;
+  if (!roleId) return res.status(400).json({ error: 'Missing roleId' });
+
+  const current = await getConfigValue({ db }, guildId, 'ticketSettings', {});
+  let pingRoleIds = Array.isArray(current.pingRoleIds) ? [...current.pingRoleIds] : [];
+
+  if (action === 'add') {
+    if (!pingRoleIds.includes(roleId) && pingRoleIds.length < 5) {
+      pingRoleIds.push(roleId);
+    }
+  } else if (action === 'remove') {
+    pingRoleIds = pingRoleIds.filter(id => id !== roleId);
+  }
+
+  await updateGuildConfig({ db }, guildId, { ticketSettings: { ...current, pingRoleIds } });
+  return res.json({ ok: true, pingRoleIds });
+});
+
+// ── Ticket Settings: Welcome Message ─────────────────────────────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/ticket-settings/welcome', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const welcomeMessage = (req.body.welcomeMessage || '').trim().slice(0, 500);
+  const current = await getConfigValue({ db }, guildId, 'ticketSettings', {});
+  await updateGuildConfig({ db }, guildId, { ticketSettings: { ...current, welcomeMessage } });
+  res.redirect(`/dashboard/server/${guildId}?success=Welcome+message+saved#tickets`);
+});
+
+// ── Ticket Settings: Auto-Reply Toggle (Premium) ──────────────────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/ticket-settings/auto-reply', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+
+  const sub  = await getSubscription(guildId);
+  const tier = isOwner(access.user.id) ? 'enterprise' : getTier(sub);
+  if (tier !== 'premium' && tier !== 'enterprise') {
+    return res.redirect(`/dashboard/server/${guildId}?error=Premium+required#tickets`);
+  }
+
+  const enabled = req.body.enabled === 'true';
+  const current = await getConfigValue({ db }, guildId, 'ticketSettings', {});
+  await updateGuildConfig({ db }, guildId, { ticketSettings: { ...current, autoReplyEnabled: enabled } });
+  res.redirect(`/dashboard/server/${guildId}?success=Auto-reply+${enabled?'enabled':'disabled'}#tickets`);
 });
 
 // ── Join Requests: Save Settings (log channel + custom format) ────────────────
