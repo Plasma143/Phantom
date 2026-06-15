@@ -3,6 +3,7 @@ import { Events } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { postAuditLog } from '../services/phantomAudit.js';
 import { getFromDb } from '../utils/database.js';
+import { getSubscription, getTier, isOwner } from '../web/stripePayments.js';
 
 export default {
   name: Events.GuildBanAdd,
@@ -30,6 +31,11 @@ export default {
 
       // ── Alliance ban sync ─────────────────────────────────────────────
       try {
+        // Enterprise only
+        const sub  = await getSubscription(guild.id);
+        const tier = isOwner(guild.ownerId) ? 'enterprise' : getTier(sub);
+        if (tier !== 'enterprise') return;
+
         const alliances = await getFromDb(`alliances:${guild.id}`, []);
         const syncable  = alliances.filter(a => a.syncBans);
         for (const alliance of syncable) {
