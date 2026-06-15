@@ -250,6 +250,13 @@ export default {
             return;
           }
 
+          // Notification preference toggles
+          if (interaction.customId.startsWith('notif_toggle:')) {
+            const { handleNotifToggle } = await import('../commands/Core/notifications.js');
+            await handleNotifToggle(interaction).catch(err => logger.error('[Notif] toggle error:', err.message));
+            return;
+          }
+
           // Suggestion panel button (opens modal)
           if (interaction.customId === 'suggest_open_modal') {
             const { handleSuggestionPanelButton } = await import('../commands/Community/suggest.js');
