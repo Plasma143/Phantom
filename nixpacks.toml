@@ -1,2 +1,2 @@
 [phases.setup]
-aptPkgs = ["ffmpeg", "espeak-ng"]
+aptPkgs = ["ffmpeg", "espeak-ng", "python3", "build-essential", "libopus-dev"]
