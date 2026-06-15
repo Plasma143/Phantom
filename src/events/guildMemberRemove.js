@@ -8,6 +8,9 @@ import { postAuditLog, timeAgo } from '../services/phantomAudit.js';
 import { getGuildBirthdays, deleteBirthday } from '../utils/database.js';
 import { deleteUserLevelData } from '../services/leveling.js';
 import { logger } from '../utils/logger.js';
+import { getConfigValue } from '../services/guildConfig.js';
+import { getRobloxLink } from '../utils/robloxDb.js';
+import { updateGroupMemberRank } from '../utils/roblox.js';
 
 export default {
   name: Events.GuildMemberRemove,
@@ -170,6 +173,32 @@ export default {
             logger.debug(`Removed leveling data for user ${user.id} in guild ${guild.id}`);
         } catch (error) {
             logger.debug('Error handling leveling data on member leave:', error);
+        }
+
+        // ── Auto-demotion on leave ────────────────────────────────────────
+        try {
+            const roblox = await getConfigValue({ db: member.client.db }, guild.id, 'roblox', {});
+            if (roblox.autoDemote?.enabled && roblox.groupId && roblox.openCloudKey) {
+                const link = await getRobloxLink(user.id);
+                if (link?.roblox_id) {
+                    const exileRankId = roblox.autoDemote.exileRankId ?? 0;
+                    await updateGroupMemberRank(roblox.groupId, link.roblox_id, exileRankId, roblox.openCloudKey);
+                    logger.info(`[AutoDemote] Demoted ${user.tag} (Roblox: ${link.roblox_id}) to rank ${exileRankId} in group ${roblox.groupId}`);
+
+                    await postAuditLog(member.client, guild, 'roblox', {
+                        color: 0xed4245,
+                        title: '🚪 Auto-Demotion on Leave',
+                        fields: [
+                            { name: 'Discord User', value: `${user.tag} (${user.id})`, inline: true },
+                            { name: 'Roblox ID', value: String(link.roblox_id), inline: true },
+                            { name: 'Set to Rank', value: String(exileRankId), inline: true },
+                        ],
+                        footer: 'Auto-demoted on Discord leave',
+                    });
+                }
+            }
+        } catch (error) {
+            logger.debug('Error handling auto-demotion on member leave:', error);
         }
         
     } catch (error) {
