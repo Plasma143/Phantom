@@ -250,6 +250,13 @@ export default {
             return;
           }
 
+          // Suggestion panel button (opens modal)
+          if (interaction.customId === 'suggest_open_modal') {
+            const { handleSuggestionPanelButton } = await import('../commands/Community/suggest.js');
+            await handleSuggestionPanelButton(interaction).catch(err => logger.error('[Suggest] panel button error:', err.message));
+            return;
+          }
+
           // Suggestion approve/deny buttons
           if (interaction.customId.startsWith('suggest_approve:') || interaction.customId.startsWith('suggest_deny:')) {
             const { handleSuggestionButton } = await import('../commands/Community/suggest.js');
@@ -318,6 +325,12 @@ export default {
             }, interactionTraceContext));
           }
         } else if (interaction.isModalSubmit()) {
+          if (interaction.customId === 'suggest_submit_modal') {
+            const { handleSuggestionSubmitModal } = await import('../commands/Community/suggest.js');
+            await handleSuggestionSubmitModal(interaction, client).catch(err => logger.error('[Suggest] submit modal error:', err.message));
+            return;
+          }
+
           if (interaction.customId.startsWith('suggest_modal:')) {
             const { handleSuggestionModal } = await import('../commands/Community/suggest.js');
             await handleSuggestionModal(interaction, client).catch(err => logger.error('[Suggest] modal error:', err.message));
