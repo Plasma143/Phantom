@@ -3,91 +3,89 @@ import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import {
   joinVoiceChannel, getVoiceConnection, createAudioPlayer,
   createAudioResource, AudioPlayerStatus, VoiceConnectionStatus,
-  generateDependencyReport,
+  StreamType, generateDependencyReport,
 } from '@discordjs/voice';
-import { spawn, execSync } from 'child_process';
-import { writeFileSync, unlinkSync, existsSync } from 'fs';
+import { spawn } from 'child_process';
+import { createReadStream, writeFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 import { logger } from '../../utils/logger.js';
 
 export const ttsSessions = new Map();
-
-// Stub for app.js import compatibility — sessions are in-memory only
 export function restoreTTSSessions() {}
 
-// ── Check what TTS engine is available ───────────────────────────────────────
-function getEngine() {
-  for (const cmd of ['espeak-ng', 'espeak']) {
-    try { execSync(`which ${cmd} 2>/dev/null`); return cmd; } catch {}
-  }
-  return null;
-}
-
-// ── Generate audio to a temp WAV file ────────────────────────────────────────
-async function generateToFile(text) {
+// ── Generate OggOpus file: Google TTS MP3 → ffmpeg → .ogg ────────────────────
+async function generateOggFile(text) {
   const clean = text.replace(/https?:\/\/\S+/g, 'link').slice(0, 300);
-  const tmp = join('/tmp', `phantom_tts_${Date.now()}.wav`);
-  const engine = getEngine();
+  const id    = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const mp3   = join('/tmp', `phantom_tts_${id}.mp3`);
+  const ogg   = join('/tmp', `phantom_tts_${id}.ogg`);
 
-  if (engine) {
-    // espeak-ng / espeak: write directly to WAV file
-    await new Promise((resolve, reject) => {
-      const proc = spawn(engine, ['-v', 'en', '-s', '145', '-w', tmp, clean]);
-      proc.on('close', code => code === 0 ? resolve() : reject(new Error(`${engine} exit ${code}`)));
-      proc.on('error', reject);
-    });
-    return tmp;
-  }
+  // Fetch MP3 from Google Translate TTS
+  const url  = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(clean)}&tl=en&client=tw-ob`;
+  const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Phantom/1.0)' } });
+  if (!resp.ok) throw new Error(`Google TTS HTTP ${resp.status}`);
+  writeFileSync(mp3, Buffer.from(await resp.arrayBuffer()));
 
-  // Fallback: Google Translate TTS → download MP3 → convert to WAV via ffmpeg
-  const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(clean)}&tl=en&client=tw-ob`;
-  const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-  if (!resp.ok) throw new Error(`Google TTS ${resp.status}`);
-  const mp3 = Buffer.from(await resp.arrayBuffer());
-
-  const mp3tmp = tmp.replace('.wav', '.mp3');
-  writeFileSync(mp3tmp, mp3);
-
+  // Convert MP3 → Ogg/Opus using system ffmpeg (libopus confirmed available)
   await new Promise((resolve, reject) => {
-    const ff = spawn('ffmpeg', ['-y', '-i', mp3tmp, '-ar', '48000', '-ac', '2', tmp, '-loglevel', 'error']);
+    const ff = spawn('ffmpeg', [
+      '-y', '-i', mp3,
+      '-c:a', 'libopus',
+      '-b:a', '96k',
+      '-ar', '48000',
+      '-ac', '2',
+      '-f', 'ogg',
+      ogg,
+      '-loglevel', 'error',
+    ]);
+    ff.stderr.on('data', d => logger.debug('[TTS ffmpeg]', d.toString().trim()));
     ff.on('close', code => {
-      try { unlinkSync(mp3tmp); } catch {}
-      code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}`));
+      try { unlinkSync(mp3); } catch {}
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg exited with code ${code}`));
     });
-    ff.on('error', reject);
+    ff.on('error', err => { try { unlinkSync(mp3); } catch {} reject(err); });
   });
 
-  return tmp;
+  return ogg;
 }
 
-// ── Queue player ──────────────────────────────────────────────────────────────
+// ── Play next queued item ─────────────────────────────────────────────────────
 async function playNext(guildId) {
   const s = ttsSessions.get(guildId);
   if (!s || !s.queue.length || s.playing) return;
   const { username, text } = s.queue.shift();
   s.playing = true;
-  let tmpFile = null;
+  let oggFile = null;
   try {
-    tmpFile = await generateToFile(`${username} says ${text}`);
-    const resource = createAudioResource(tmpFile);
+    oggFile = await generateOggFile(`${username} says ${text}`);
+
+    // Use StreamType.OggOpus — sends Opus packets directly to Discord, no re-encoding
+    const resource = createAudioResource(createReadStream(oggFile), {
+      inputType: StreamType.OggOpus,
+    });
+
     s.player.play(resource);
+
     s.player.once(AudioPlayerStatus.Idle, () => {
       s.playing = false;
-      try { if (tmpFile && existsSync(tmpFile)) unlinkSync(tmpFile); } catch {}
+      try { if (oggFile && existsSync(oggFile)) unlinkSync(oggFile); } catch {}
       playNext(guildId);
     });
+
     s.player.once('error', e => {
       logger.error('[TTS] player error:', e.message);
+      s.textChannel?.send(`⚠️ TTS playback error: \`${e.message}\``).catch(() => {});
       s.playing = false;
-      try { if (tmpFile && existsSync(tmpFile)) unlinkSync(tmpFile); } catch {}
+      try { if (oggFile && existsSync(oggFile)) unlinkSync(oggFile); } catch {}
       playNext(guildId);
     });
+
   } catch (e) {
     logger.error('[TTS] generation error:', e.message);
-    s.playing = false;
-    try { if (tmpFile && existsSync(tmpFile)) unlinkSync(tmpFile); } catch {}
-    // Post error visibly so we can debug
     s.textChannel?.send(`⚠️ TTS error: \`${e.message}\``).catch(() => {});
+    s.playing = false;
+    try { if (oggFile && existsSync(oggFile)) unlinkSync(oggFile); } catch {}
     playNext(guildId);
   }
 }
@@ -116,15 +114,13 @@ export default {
   category: 'commands',
 
   async execute(interaction) {
-    const sub = interaction.options.getSubcommand();
+    const sub     = interaction.options.getSubcommand();
     const guildId = interaction.guildId;
 
     if (sub === 'debug') {
-      const report = generateDependencyReport();
-      const engine = getEngine() || 'none (Google TTS fallback)';
-      // Post visibly so we can screenshot it
+      const report  = generateDependencyReport();
       return interaction.reply(
-        `**TTS Dependency Report:**\n\`\`\`\n${report}\nLocal TTS Engine: ${engine}\n\`\`\``
+        `**TTS Dependency Report:**\n\`\`\`\n${report}\n\`\`\``
       );
     }
 
@@ -148,17 +144,18 @@ export default {
 
       const player = createAudioPlayer();
       connection.subscribe(player);
-      player.on('error', e => logger.error('[TTS] player:', e.message));
+      player.on('error', e => logger.error('[TTS] player error:', e.message));
       connection.on(VoiceConnectionStatus.Disconnected, () => ttsSessions.delete(guildId));
 
       ttsSessions.set(guildId, {
-        connection, player, queue: [], playing: false,
+        connection, player,
+        queue: [], playing: false,
         textChannelId: interaction.channelId,
+        textChannel: interaction.channel,
       });
 
-      const engine = getEngine() || 'Google TTS';
       return interaction.reply(
-        `🔊 Joined **${vc.name}** — reading **#${interaction.channel.name}** aloud via ${engine}.\nUse \`/tts leave\` to stop.`
+        `🔊 Joined **${vc.name}** — reading **#${interaction.channel.name}** aloud.\nUse \`/tts leave\` to stop.`
       );
     }
 
