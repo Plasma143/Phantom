@@ -959,12 +959,26 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
               <label for="autoRankEnabled" style="color:#fff; font-size:14px; font-weight:600; cursor:pointer;">Enable auto-ranking</label>
             </div>
 
-            <p style="font-weight:700; margin:0 0 6px; font-size:14px; color:#fff;">👁 Watch Channel</p>
-            <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Phantom reads every message here looking for promotion logs.</p>
+            <p style="font-weight:700; margin:0 0 6px; font-size:14px; color:#fff;">👁 Watch Channel${isEnterprise ? 's' : ''}</p>
+            <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">Phantom reads every message here looking for promotion logs.${isEnterprise ? ' Enterprise: select multiple channels.' : ''}</p>
+            ${isEnterprise ? `
+            <p style="color:#c084fc; font-size:12px; margin:0 0 8px;">👑 Enterprise — hold Ctrl/Cmd to select multiple channels</p>
+            <select name="watchChannelIds" multiple style="width:100%; ${fieldStyle} margin-bottom:20px; height:120px;">
+              ${(() => {
+                const selectedIds = autoRank.watchChannelIds?.length
+                  ? autoRank.watchChannelIds
+                  : autoRank.watchChannelId ? [autoRank.watchChannelId] : [];
+                return channels.filter(c => c.type === 0).map(c =>
+                  `<option value="${c.id}" ${selectedIds.includes(c.id) ? 'selected' : ''}>#${c.name}</option>`
+                ).join('');
+              })()}
+            </select>
+            ` : `
             <select name="watchChannelId" style="width:100%; ${fieldStyle} margin-bottom:20px;">
               <option value="">-- None --</option>
               ${channelOptions(autoRank.watchChannelId)}
             </select>
+            `}
 
             <p style="font-weight:700; margin:0 0 6px; font-size:14px; color:#fff;">📋 Confirmation Log Channel</p>
             <p style="color:#949ba4; font-size:13px; margin:0 0 10px;">After applying a rank, Phantom posts a confirmation here.</p>
@@ -2140,13 +2154,29 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/auto-rank', async (req, res
   if (!access) return;
   if (!await checkTier(access, guildId)) return res.redirect(`/dashboard/server/${guildId}?error=Premium+required+for+Auto-Rank#rank-management`);
 
-  const enabled         = req.body.enabled === '1';
-  const watchChannelId  = req.body.watchChannelId  || null;
-  const logChannelId    = req.body.logChannelId     || null;
-  const customFormat    = (req.body.customFormat || '').trim() || null;
+  const enabled      = req.body.enabled === '1';
+  const logChannelId = req.body.logChannelId || null;
+  const customFormat = (req.body.customFormat || '').trim() || null;
+
+  // Enterprise: save array of channels; Premium: save single channel
+  const tier = await checkTier(access, guildId, 'enterprise');
+  let watchChannelId  = null;
+  let watchChannelIds = null;
+
+  if (tier === 'enterprise' && req.body.watchChannelIds) {
+    // Multi-select sends array or single string
+    const raw = Array.isArray(req.body.watchChannelIds)
+      ? req.body.watchChannelIds
+      : [req.body.watchChannelIds];
+    watchChannelIds = raw.filter(Boolean);
+    watchChannelId  = watchChannelIds[0] || null; // keep single for backwards compat
+  } else {
+    watchChannelId  = req.body.watchChannelId || null;
+    watchChannelIds = null;
+  }
 
   await updateGuildConfig({ db }, guildId, {
-    autoRank: { enabled, watchChannelId, logChannelId, customFormat },
+    autoRank: { enabled, watchChannelId, watchChannelIds, logChannelId, customFormat },
   });
 
   res.redirect(`/dashboard/server/${guildId}?success=Auto-rank+settings+saved#rank-management`);
