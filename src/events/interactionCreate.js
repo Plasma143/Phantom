@@ -250,6 +250,13 @@ export default {
             return;
           }
 
+          // Suggestion approve/deny buttons
+          if (interaction.customId.startsWith('suggest_approve:') || interaction.customId.startsWith('suggest_deny:')) {
+            const { handleSuggestionButton } = await import('./commands/Community/suggest.js');
+            await handleSuggestionButton(interaction, client).catch(err => logger.error('[Suggest] button error:', err.message));
+            return;
+          }
+
           const [customId, ...args] = interaction.customId.split(':');
           const button = client.buttons.get(customId);
 
@@ -304,6 +311,11 @@ export default {
             }, interactionTraceContext));
           }
         } else if (interaction.isModalSubmit()) {
+          if (interaction.customId.startsWith('suggest_modal:')) {
+            const { handleSuggestionModal } = await import('./commands/Community/suggest.js');
+            await handleSuggestionModal(interaction, client).catch(err => logger.error('[Suggest] modal error:', err.message));
+            return;
+          }
           if (interaction.customId.startsWith('app_modal_')) {
             try {
               await handleApplicationModal(interaction);
