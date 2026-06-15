@@ -264,6 +264,13 @@ export default {
             return;
           }
 
+          // Rank request approve/deny buttons
+          if (interaction.customId.startsWith('rr_approve:') || interaction.customId.startsWith('rr_deny:')) {
+            const { handleRankRequestButton } = await import('../commands/Core/rankrequest.js');
+            await handleRankRequestButton(interaction, client).catch(err => logger.error('[RankReq] button error:', err.message));
+            return;
+          }
+
           // Review button
           if (interaction.customId === 'review_open_modal') {
             const { handleReviewButton } = await import('../commands/Community/review.js');
@@ -297,6 +304,13 @@ export default {
             }, interactionTraceContext));
           }
         } else if (interaction.isStringSelectMenu()) {
+          // Rank request rank selection
+          if (interaction.customId.startsWith('rr_select:')) {
+            const { handleRankRequestSelect } = await import('../commands/Core/rankrequest.js');
+            await handleRankRequestSelect(interaction, client).catch(err => logger.error('[RankReq] select error:', err.message));
+            return;
+          }
+
           const [customId, ...args] = interaction.customId.split(':');
           const selectMenu = client.selectMenus.get(customId);
 
