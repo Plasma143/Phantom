@@ -1,17 +1,3 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 import { PermissionFlagsBits } from 'discord.js';
 import { botConfig } from '../config/bot.js';
 import { logger } from '../utils/logger.js';
@@ -19,6 +5,7 @@ import { getGuildConfig, setGuildConfig } from './guildConfig.js';
 import { createError, ErrorTypes } from '../utils/errorHandler.js';
 import { insertVerificationAudit } from '../utils/database.js';
 import { ensureTypedServiceError } from '../utils/serviceErrorBoundary.js';
+import { canDm } from '../commands/Core/notifications.js';
 
 
 const verificationCooldowns = new Map();
@@ -701,7 +688,9 @@ async function sendAutoVerifyNotification(member, role, guild) {
             color: 'success'
         });
 
-        await member.send({ embeds: [embed] });
+        if (await canDm(member.id, 'verification')) {
+          await member.send({ embeds: [embed] });
+        }
     } catch (error) {
         logger.debug('Could not send auto-verify DM notification', {
             userId: member.id,
