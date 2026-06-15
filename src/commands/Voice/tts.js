@@ -2,8 +2,8 @@
 //
 // Architecture translated from moonstar-x/discord-tts-bot:
 //   - AudioPlayer created separately and subscribed ONLY after VoiceConnectionStatus.Ready
-//   - Google TTS URL fetched via Node.js (avoids ffmpeg 403 issue)
-//   - MP3 saved to temp file; ffmpeg reads local file (no network block)
+//   - Google Cloud TTS API synthesises audio to a temp MP3 file
+//   - ffmpeg reads the local file (no network block during playback)
 //   - Queue processed serially: one segment at a time, next plays on Idle
 //   - stateChange handler re-configures networking on reconnect (from reference bot)
 
@@ -17,51 +17,27 @@ import {
   AudioPlayerStatus,
   VoiceConnectionStatus,
 } from '@discordjs/voice';
-import googleTTS from 'google-tts-api';
-import { createReadStream, writeFileSync, unlinkSync, existsSync } from 'fs';
-import { join } from 'path';
+import { createReadStream } from 'fs';
+import { synthesizeSpeechChunked, cleanupTempFile } from '../../services/ttsService.js';
 import { logger } from '../../utils/logger.js';
 
 export const ttsSessions = new Map();
 export function restoreTTSSessions() {}
 
-// ── Download Google TTS MP3 to temp file, return file path ───────────────────
+// ── Sanitise and synthesise text → array of temp MP3 file paths ──────────────
 async function downloadTTS(text) {
   const clean = text
     .replace(/https?:\/\/\S+/g, 'link')
     .replace(/[<>]/g, '')
     .trim()
-    .slice(0, 200);
+    .slice(0, 500); // Google Cloud TTS handles longer text natively
 
-  // google-tts-api constructs the correct URL and handles text splitting
-  const urls = googleTTS.getAllAudioUrls(clean, {
-    lang: 'en',
-    slow: false,
-    splitPunct: ',.?!',
-  });
-
-  const files = [];
-  for (const { url } of urls) {
-    const resp = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://translate.google.com/',
-      },
-    });
-    if (!resp.ok) throw new Error(`Google TTS HTTP ${resp.status}`);
-    const buf = Buffer.from(await resp.arrayBuffer());
-    if (buf.length < 50) throw new Error('Google TTS returned empty audio');
-
-    const tmpFile = join('/tmp', `phantom_tts_${Date.now()}_${files.length}.mp3`);
-    writeFileSync(tmpFile, buf);
-    files.push(tmpFile);
-  }
-  return files;
+  return synthesizeSpeechChunked(clean);
 }
 
 // ── Clean up a temp file ──────────────────────────────────────────────────────
 function cleanup(file) {
-  try { if (file && existsSync(file)) unlinkSync(file); } catch {}
+  cleanupTempFile(file);
 }
 
 // ── Connect and subscribe player ONLY after Ready (ref bot pattern) ──────────

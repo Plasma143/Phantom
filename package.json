@@ -15,6 +15,7 @@
     "backup:drill": "node scripts/restore-drill.js"
   },
   "dependencies": {
+    "@google-cloud/text-to-speech": "^5.0.0",
     "@discord-player/extractor": "^7.2.0",
     "@discordjs/rest": "^2.6.1",
     "@discordjs/voice": "^0.17.0",
