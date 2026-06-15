@@ -12,6 +12,9 @@ import { logger } from '../../utils/logger.js';
 
 export const ttsSessions = new Map();
 
+// Stub for app.js import compatibility — sessions are in-memory only
+export function restoreTTSSessions() {}
+
 // ── Check what TTS engine is available ───────────────────────────────────────
 function getEngine() {
   for (const cmd of ['espeak-ng', 'espeak']) {
