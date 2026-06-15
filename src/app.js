@@ -13,6 +13,7 @@ import { getServerCounters, saveServerCounters, updateCounter } from './services
 import { logger, startupLog, shutdownLog } from './utils/logger.js';
 import { checkBirthdays } from './services/birthdayService.js';
 import { checkGiveaways } from './services/giveawayService.js';
+import { checkReminders } from './commands/Tools/remind.js';
 import { loadCommands, registerCommands as registerSlashCommands } from './handlers/commandLoader.js';
 import { robloxOAuthRouter } from './web/robloxOAuth.js';
 import { dashboardAuthRouter } from './web/dashboardAuth.js';
@@ -683,6 +684,8 @@ class PhantomBot extends Client {
     cron.schedule('0 * * * *', () => this.runScheduledRankSync());
     // Auto-close tickets older than 7 days — runs daily at 3am
     cron.schedule('0 3 * * *', () => this.autoCloseStaleTickets());
+    // Fire due reminders every minute
+    cron.schedule('* * * * *', () => checkReminders(this));
   }
 
   // Auto-close open tickets older than 3 days, auto-delete closed tickets older than 7 days
