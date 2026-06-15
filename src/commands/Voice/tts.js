@@ -71,31 +71,91 @@ async function createSpeech(text) {
 
 async function playNext(guildId) {
   const s = ttsSessions.get(guildId);
-  if (!s || !s.queue.length || s.playing) return;
+  if (!s) {
+    logger.debug(`[TTS] playNext: no session for guild ${guildId}`);
+    return;
+  }
+  if (!s.queue.length) {
+    logger.debug(`[TTS] playNext: queue empty for guild ${guildId}`);
+    return;
+  }
+  if (s.playing) {
+    logger.debug(`[TTS] playNext: already playing in guild ${guildId} — will resume after current item`);
+    return;
+  }
+
   const { username, text } = s.queue.shift();
   s.playing = true;
+  logger.debug(`[TTS] playNext: synthesising for ${username} in guild ${guildId}`);
+
   try {
     const { stream, type } = await createSpeech(`${username} says ${text}`);
-    const resource = createAudioResource(stream, { inputType: type });
-    s.player.play(resource);
-    s.player.once(AudioPlayerStatus.Idle, () => { s.playing = false; playNext(guildId); });
+
+    let resource;
+    try {
+      resource = createAudioResource(stream, { inputType: type });
+    } catch (resourceErr) {
+      logger.error('[TTS] Failed to create audio resource:', resourceErr.message);
+      s.playing = false;
+      playNext(guildId);
+      return;
+    }
+
     resource.playStream?.on('error', e => {
-      logger.error('[TTS] stream error:', e.message);
-      s.playing = false; playNext(guildId);
+      logger.error('[TTS] stream error during playback:', e.message);
+      s.playing = false;
+      playNext(guildId);
+    });
+
+    s.player.play(resource);
+    logger.debug(`[TTS] playNext: playback started for guild ${guildId}`);
+
+    s.player.once(AudioPlayerStatus.Idle, () => {
+      logger.debug(`[TTS] playNext: player idle — advancing queue for guild ${guildId}`);
+      s.playing = false;
+      playNext(guildId);
     });
   } catch (e) {
-    logger.error('[TTS] playNext error:', e.message);
-    s.playing = false; playNext(guildId);
+    logger.error(`[TTS] playNext error for guild ${guildId}:`, e.message);
+    s.playing = false;
+    playNext(guildId);
   }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function handleTTSMessage(message) {
+  logger.debug(`[TTS] handleTTSMessage called — guild=${message.guildId} channel=${message.channel.id} author=${message.author.username} bot=${message.author.bot}`);
+
   const s = ttsSessions.get(message.guildId);
-  if (!s || message.channel.id !== s.textChannelId || message.author.bot) return;
+  if (!s) {
+    logger.debug(`[TTS] No active session for guild ${message.guildId} — ignoring message`);
+    return;
+  }
+
+  // Validate that the session has all required runtime properties
+  const missing = ['connection', 'player', 'queue', 'textChannelId'].filter(k => !(k in s));
+  if (missing.length) {
+    logger.warn(`[TTS] Session for guild ${message.guildId} is missing required properties: ${missing.join(', ')} — dropping message`);
+    return;
+  }
+
+  if (message.author.bot) {
+    logger.debug(`[TTS] Ignoring bot message in guild ${message.guildId}`);
+    return;
+  }
+
+  if (message.channel.id !== s.textChannelId) {
+    logger.debug(`[TTS] Message channel ${message.channel.id} does not match TTS channel ${s.textChannelId} — ignoring`);
+    return;
+  }
+
   const text = message.content?.trim();
-  if (!text) return;
+  if (!text) {
+    logger.debug(`[TTS] Empty message content from ${message.author.username} — ignoring`);
+    return;
+  }
+
   logger.info(`[TTS] Queuing: "${text.slice(0, 50)}" from ${message.author.username}`);
   s.queue.push({ username: message.member?.displayName || message.author.username, text });
   playNext(message.guildId);
