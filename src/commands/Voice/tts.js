@@ -60,6 +60,7 @@ async function generateTestTone() {
 async function playLocalFile(voiceChannel, filePath, textChannel) {
   const player = useMainPlayer();
   await player.play(voiceChannel, filePath, {
+    searchEngine: QueryType.FILE,
     nodeOptions: {
       metadata: { channel: textChannel, isTTS: true },
       selfDeaf: false,
@@ -68,8 +69,6 @@ async function playLocalFile(voiceChannel, filePath, textChannel) {
       leaveOnEnd: false,
       leaveOnStop: false,
     },
-    requestedBy: voiceChannel.guild.members.me,
-    audioPlayerOptions: { behaviors: {} },
   });
 }
 
