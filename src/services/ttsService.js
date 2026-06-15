@@ -1,102 +1,58 @@
 // src/services/ttsService.js
 //
-// Google Cloud Text-to-Speech service.
+// Offline Text-to-Speech service using SVOX Pico TTS (pico-tts npm package).
 //
-// Authentication:
-//   Set GOOGLE_APPLICATION_CREDENTIALS to the path of your service-account JSON
-//   key file, or set GOOGLE_TTS_CREDENTIALS_JSON to the raw JSON string (useful
-//   for Railway environment variables).
+// No API keys, no billing, no network calls — runs entirely on-device.
+// Requires the libttspico system packages installed in the container/host
+// (libttspico0, libttspico-data, libttspico-utils).
 //
-// Free tier: 1 million WaveNet characters / month.
-// Docs: https://cloud.google.com/text-to-speech/docs
+// pico2wave produces a WAV file which discord.js can play directly via ffmpeg.
 
-import { Readable } from 'stream';
-import { writeFileSync, existsSync, unlinkSync } from 'fs';
+import { existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { logger } from '../utils/logger.js';
 
-// ── Lazy-initialise the Google Cloud TTS client ───────────────────────────────
-let _client = null;
-let _clientError = null;
-
-async function getClient() {
-  if (_client) return _client;
-  if (_clientError) throw _clientError;
-
-  try {
-    // Support raw JSON credentials supplied as an env-var string (Railway-friendly)
-    if (process.env.GOOGLE_TTS_CREDENTIALS_JSON && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      const creds = JSON.parse(process.env.GOOGLE_TTS_CREDENTIALS_JSON);
-      const tmpPath = join('/tmp', 'phantom_gcp_creds.json');
-      writeFileSync(tmpPath, JSON.stringify(creds));
-      process.env.GOOGLE_APPLICATION_CREDENTIALS = tmpPath;
-      logger.info('[TTS_SERVICE] Loaded GCP credentials from GOOGLE_TTS_CREDENTIALS_JSON');
-    }
-
-    const { TextToSpeechClient } = await import('@google-cloud/text-to-speech');
-    _client = new TextToSpeechClient();
-    logger.info('[TTS_SERVICE] Google Cloud TTS client initialised');
-    return _client;
-  } catch (err) {
-    _clientError = err;
-    logger.error('[TTS_SERVICE] Failed to initialise Google Cloud TTS client:', err.message);
-    throw err;
-  }
-}
-
-// ── Synthesise text → MP3 temp file path ─────────────────────────────────────
+// ── Synthesise text → WAV temp file path ─────────────────────────────────────
 /**
- * Synthesises `text` using Google Cloud TTS and writes the resulting MP3 to a
- * temporary file.  Returns the file path so the caller can stream it to Discord
- * and delete it afterwards.
+ * Synthesises `text` using SVOX Pico TTS (offline, no API key required) and
+ * writes the resulting WAV to a temporary file.  Returns the file path so the
+ * caller can stream it to Discord and delete it afterwards.
  *
- * @param {string} text  Plain text to synthesise (max ~5 000 bytes per request).
- * @returns {Promise<string>}  Absolute path to the temporary MP3 file.
+ * @param {string} text  Plain text to synthesise.
+ * @returns {Promise<string>}  Absolute path to the temporary WAV file.
  */
 export async function synthesizeSpeech(text) {
-  const client = await getClient();
+  const { default: pico } = await import('pico-tts');
 
-  const [response] = await client.synthesizeSpeech({
-    input: { text },
-    voice: {
-      languageCode: 'en-US',
-      ssmlGender: 'NEUTRAL',
-      // Standard voice — no cost against the WaveNet quota.
-      // Swap to 'en-US-Wavenet-D' for higher quality (counts against WaveNet quota).
-      name: 'en-US-Standard-C',
-    },
-    audioConfig: {
-      audioEncoding: 'MP3',
-      speakingRate: 1.0,
-      pitch: 0.0,
-    },
-  });
+  const tmpFile = join('/tmp', `phantom_tts_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
 
-  const audioContent = response.audioContent;
-  if (!audioContent || audioContent.length < 50) {
-    throw new Error('Google Cloud TTS returned empty audio');
+  // pico-tts wraps pico2wave; it returns a Buffer containing WAV audio.
+  const wavBuffer = await pico(text, { lang: 'en-US' });
+
+  if (!wavBuffer || wavBuffer.length < 50) {
+    throw new Error('pico-tts returned empty audio');
   }
 
-  const tmpFile = join('/tmp', `phantom_tts_${Date.now()}_${Math.random().toString(36).slice(2)}.mp3`);
-  writeFileSync(tmpFile, audioContent, 'binary');
-  logger.debug(`[TTS_SERVICE] Wrote ${audioContent.length} bytes → ${tmpFile}`);
+  const { writeFileSync } = await import('fs');
+  writeFileSync(tmpFile, wavBuffer);
+  logger.debug(`[TTS_SERVICE] Wrote ${wavBuffer.length} bytes → ${tmpFile}`);
   return tmpFile;
 }
 
-// ── Split long text into ≤ 4 500-byte chunks (API limit is 5 000 bytes) ───────
+// ── Split long text into sentence-aware chunks ────────────────────────────────
 /**
- * Splits `text` into sentence-aware chunks that each fit within the Google
- * Cloud TTS byte limit, then synthesises each chunk and returns an ordered
- * array of temp-file paths.
+ * Splits `text` into sentence-aware chunks (pico2wave handles up to ~32 KB of
+ * text, but shorter chunks produce more natural pauses), synthesises each chunk
+ * in order, and returns an array of temp WAV file paths.
  *
  * @param {string} text
  * @returns {Promise<string[]>}
  */
 export async function synthesizeSpeechChunked(text) {
-  const MAX_BYTES = 4_500;
-  const encoder = new TextEncoder();
+  // pico2wave can handle long text natively, but we chunk at sentence
+  // boundaries so each segment plays as a natural speech unit.
+  const MAX_CHARS = 300;
 
-  // Split on sentence boundaries first, then hard-split any remaining giants.
   const sentences = text.match(/[^.!?]+[.!?]*/g) ?? [text];
 
   const chunks = [];
@@ -104,25 +60,24 @@ export async function synthesizeSpeechChunked(text) {
 
   for (const sentence of sentences) {
     const candidate = current ? `${current} ${sentence.trim()}` : sentence.trim();
-    if (encoder.encode(candidate).length <= MAX_BYTES) {
+    if (candidate.length <= MAX_CHARS) {
       current = candidate;
     } else {
       if (current) chunks.push(current);
       // If a single sentence is still too long, hard-split by words.
-      if (encoder.encode(sentence).length > MAX_BYTES) {
+      if (sentence.trim().length > MAX_CHARS) {
         const words = sentence.trim().split(/\s+/);
         let wordChunk = '';
         for (const word of words) {
           const wc = wordChunk ? `${wordChunk} ${word}` : word;
-          if (encoder.encode(wc).length <= MAX_BYTES) {
+          if (wc.length <= MAX_CHARS) {
             wordChunk = wc;
           } else {
             if (wordChunk) chunks.push(wordChunk);
             wordChunk = word;
           }
         }
-        if (wordChunk) current = wordChunk;
-        else current = '';
+        current = wordChunk;
       } else {
         current = sentence.trim();
       }

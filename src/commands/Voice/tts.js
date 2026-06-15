@@ -2,7 +2,7 @@
 //
 // Architecture translated from moonstar-x/discord-tts-bot:
 //   - AudioPlayer created separately and subscribed ONLY after VoiceConnectionStatus.Ready
-//   - Google Cloud TTS API synthesises audio to a temp MP3 file
+//   - SVOX Pico TTS synthesises audio offline to a temp WAV file (no API key needed)
 //   - ffmpeg reads the local file (no network block during playback)
 //   - Queue processed serially: one segment at a time, next plays on Idle
 //   - stateChange handler re-configures networking on reconnect (from reference bot)
@@ -24,13 +24,13 @@ import { logger } from '../../utils/logger.js';
 export const ttsSessions = new Map();
 export function restoreTTSSessions() {}
 
-// ── Sanitise and synthesise text → array of temp MP3 file paths ──────────────
+// ── Sanitise and synthesise text → array of temp WAV file paths ──────────────
 async function downloadTTS(text) {
   const clean = text
     .replace(/https?:\/\/\S+/g, 'link')
     .replace(/[<>]/g, '')
     .trim()
-    .slice(0, 500); // Google Cloud TTS handles longer text natively
+    .slice(0, 500); // pico2wave handles long text natively; 500 chars is a safe cap
 
   return synthesizeSpeechChunked(clean);
 }
