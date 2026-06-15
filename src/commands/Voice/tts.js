@@ -3,7 +3,7 @@ import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import {
   joinVoiceChannel, getVoiceConnection, createAudioPlayer,
   createAudioResource, AudioPlayerStatus, VoiceConnectionStatus,
-  StreamType, generateDependencyReport,
+  StreamType, generateDependencyReport, demuxProbe,
 } from '@discordjs/voice';
 import { spawn } from 'child_process';
 import { createReadStream, writeFileSync, unlinkSync, existsSync } from 'fs';
@@ -13,7 +13,32 @@ import { logger } from '../../utils/logger.js';
 export const ttsSessions = new Map();
 export function restoreTTSSessions() {}
 
-// ── Generate OggOpus file: Google TTS MP3 → ffmpeg → .ogg ────────────────────
+// ── Generate a test sine wave OGG using only ffmpeg (no Google TTS needed) ────
+async function generateTestTone() {
+  const ogg = join('/tmp', `phantom_test_${Date.now()}.ogg`);
+  await new Promise((resolve, reject) => {
+    const ff = spawn('ffmpeg', [
+      '-y',
+      '-f', 'lavfi', '-i', 'sine=frequency=440:duration=3',
+      '-c:a', 'libopus', '-b:a', '96k',
+      '-ar', '48000', '-ac', '2',
+      '-f', 'ogg', ogg,
+      '-loglevel', 'error',
+    ]);
+    ff.stderr.on('data', d => logger.debug('[TTS test]', d.toString().trim()));
+    ff.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg test exit ${code}`)));
+    ff.on('error', reject);
+  });
+  return ogg;
+}
+
+// ── Play an audio file using demuxProbe for reliable format detection ─────────
+async function playFile(player, filePath) {
+  const { stream, type } = await demuxProbe(createReadStream(filePath));
+  const resource = createAudioResource(stream, { inputType: type });
+  player.play(resource);
+  return resource;
+}
 async function generateOggFile(text) {
   const clean = text.replace(/https?:\/\/\S+/g, 'link').slice(0, 300);
   const id    = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -59,13 +84,7 @@ async function playNext(guildId) {
   let oggFile = null;
   try {
     oggFile = await generateOggFile(`${username} says ${text}`);
-
-    // Use StreamType.OggOpus — sends Opus packets directly to Discord, no re-encoding
-    const resource = createAudioResource(createReadStream(oggFile), {
-      inputType: StreamType.OggOpus,
-    });
-
-    s.player.play(resource);
+    await playFile(s.player, oggFile);
 
     s.player.once(AudioPlayerStatus.Idle, () => {
       s.playing = false;
@@ -109,13 +128,34 @@ export default {
     .addSubcommand(s => s.setName('join').setDescription('Join your VC and read messages aloud'))
     .addSubcommand(s => s.setName('leave').setDescription('Stop TTS and leave VC'))
     .addSubcommand(s => s.setName('clear').setDescription('Clear the TTS queue'))
-    .addSubcommand(s => s.setName('debug').setDescription('Show voice dependency report')),
+    .addSubcommand(s => s.setName('debug').setDescription('Show voice dependency report'))
+    .addSubcommand(s => s.setName('test').setDescription('Play a test tone to verify the audio pipeline')),
 
   category: 'commands',
 
   async execute(interaction) {
     const sub     = interaction.options.getSubcommand();
     const guildId = interaction.guildId;
+
+    if (sub === 'test') {
+      const s = ttsSessions.get(guildId);
+      if (!s) return interaction.reply({ content: '❌ Use `/tts join` first.', flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: '🔊 Playing test tone (440Hz sine wave)...', flags: MessageFlags.Ephemeral });
+      let testFile = null;
+      try {
+        testFile = await generateTestTone();
+        await playFile(s.player, testFile);
+        s.player.once(AudioPlayerStatus.Idle, () => {
+          try { if (testFile && existsSync(testFile)) unlinkSync(testFile); } catch {}
+          s.textChannel?.send('✅ Test tone finished. If you heard a beep, the audio pipeline works!').catch(() => {});
+        });
+        s.textChannel?.send('🎵 Test tone playing now — did you hear a beep?').catch(() => {});
+      } catch (e) {
+        try { if (testFile && existsSync(testFile)) unlinkSync(testFile); } catch {}
+        await interaction.channel?.send(`❌ Test tone failed: \`${e.message}\``).catch(() => {});
+      }
+      return;
+    }
 
     if (sub === 'debug') {
       const report  = generateDependencyReport();
