@@ -939,6 +939,7 @@ export async function getUserLevelData(client, guildId, userId) {
                 level: 0,
                 totalXp: 0,
                 lastMessage: 0,
+                messageCount: 0,
                 rank: 0,
                 xpToNextLevel: getXpForLevel(1)
             };
@@ -949,6 +950,7 @@ export async function getUserLevelData(client, guildId, userId) {
             level: data.level || 0,
             totalXp: data.totalXp || 0,
             lastMessage: data.lastMessage || 0,
+            messageCount: data.messageCount || 0,
             rank: data.rank || 0,
             xpToNextLevel: getXpForLevel((data.level || 0) + 1)
         };
@@ -2243,6 +2245,3 @@ formatted = formatted.substring(0, 100);
 function generateCaseId() {
     return `${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 4)}`;
 }
-
-
-
