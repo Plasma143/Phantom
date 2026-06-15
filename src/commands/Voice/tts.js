@@ -179,6 +179,8 @@ export default {
         });
       }
 
+      await interaction.deferReply();
+
       // Tear down any existing session
       if (ttsSessions.has(guildId)) {
         const old = ttsSessions.get(guildId);
@@ -227,13 +229,13 @@ export default {
         await connectToVoice(vc, player);
       } catch (e) {
         ttsSessions.delete(guildId);
-        return interaction.reply({
+        return interaction.editReply({
           content: `❌ Could not connect to voice: \`${e.message}\``,
           flags: MessageFlags.Ephemeral,
         });
       }
 
-      return interaction.reply(
+      return interaction.editReply(
         `🔊 Joined **${vc.name}** — reading **#${interaction.channel.name}** aloud.\nType in this channel to speak. Use \`/tts leave\` to stop.`
       );
     }
