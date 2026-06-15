@@ -1,7 +1,3 @@
-
-
-
-
 import { logger } from '../utils/logger.js';
 import { getLevelingConfig, getXpForLevel, getUserLevelData, saveUserLevelData } from './leveling.js';
 import { logEvent, EVENT_TYPES } from './loggingService.js';
@@ -35,6 +31,7 @@ export async function addXp(client, guild, member, xpToAdd) {
       levelData.xp += xpToAdd;
       levelData.totalXp += xpToAdd;
       levelData.lastMessage = Date.now();
+      levelData.messageCount = (levelData.messageCount || 0) + 1;
       
       // Handle multi-level jumps
       let xpNeededForNextLevel = getXpForLevel(levelData.level);
@@ -186,5 +183,3 @@ async function sendLevelUpAnnouncement(guild, member, levelData, config) {
     logger.error('Error sending level up announcement:', error);
   }
 }
-
-
