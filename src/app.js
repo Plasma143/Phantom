@@ -681,6 +681,86 @@ class PhantomBot extends Client {
     cron.schedule('*/15 * * * *', () => this.updateAllCounters());
     // Enterprise scheduled rank sync — runs every hour, each guild opts in per their interval
     cron.schedule('0 * * * *', () => this.runScheduledRankSync());
+    // Auto-close tickets older than 7 days — runs daily at 3am
+    cron.schedule('0 3 * * *', () => this.autoCloseStaleTickets());
+  }
+
+  // Auto-close open tickets older than 3 days, auto-delete closed tickets older than 7 days
+  async autoCloseStaleTickets() {
+    try {
+      const { pgDb } = await import('./utils/database.js');
+      const { closeTicket, deleteTicket } = await import('./services/ticket.js');
+      const { pgConfig } = await import('./config/postgres.js');
+
+      if (!pgDb?.pool) {
+        logger.debug('[AutoClose] No PostgreSQL pool available, skipping');
+        return;
+      }
+
+      const CLOSE_DAYS = 3;
+      const DELETE_DAYS = 7;
+      const closeCutoff = new Date(Date.now() - CLOSE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+      const deleteCutoff = new Date(Date.now() - DELETE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+      // ── Auto-close open tickets older than 3 days ─────────────────────────
+      const openResult = await pgDb.pool.query(
+        `SELECT guild_id, channel_id, data
+         FROM ${pgConfig.tables.tickets}
+         WHERE data->>'status' = 'open'
+           AND (data->>'createdAt')::text < $1`,
+        [closeCutoff]
+      );
+
+      if (openResult.rows.length) {
+        logger.info(`[AutoClose] Found ${openResult.rows.length} stale open ticket(s) to close`);
+        for (const row of openResult.rows) {
+          try {
+            const channel = await this.channels.fetch(row.channel_id).catch(() => null);
+            if (!channel) {
+              logger.warn(`[AutoClose] Channel ${row.channel_id} not found, skipping`);
+              continue;
+            }
+            await closeTicket(channel, this.user, `Automatically closed after ${CLOSE_DAYS} days of inactivity.`);
+            logger.info(`[AutoClose] Closed ticket ${row.channel_id} in guild ${row.guild_id}`);
+          } catch (err) {
+            logger.error(`[AutoClose] Failed to close ticket ${row.channel_id}: ${err.message}`);
+          }
+        }
+      } else {
+        logger.debug('[AutoClose] No stale open tickets found');
+      }
+
+      // ── Auto-delete closed tickets older than 7 days ──────────────────────
+      const closedResult = await pgDb.pool.query(
+        `SELECT guild_id, channel_id, data
+         FROM ${pgConfig.tables.tickets}
+         WHERE data->>'status' = 'closed'
+           AND (data->>'createdAt')::text < $1`,
+        [deleteCutoff]
+      );
+
+      if (closedResult.rows.length) {
+        logger.info(`[AutoDelete] Found ${closedResult.rows.length} stale closed ticket(s) to delete`);
+        for (const row of closedResult.rows) {
+          try {
+            const channel = await this.channels.fetch(row.channel_id).catch(() => null);
+            if (!channel) {
+              logger.warn(`[AutoDelete] Channel ${row.channel_id} not found, skipping`);
+              continue;
+            }
+            await deleteTicket(channel, this.user);
+            logger.info(`[AutoDelete] Deleted ticket ${row.channel_id} in guild ${row.guild_id}`);
+          } catch (err) {
+            logger.error(`[AutoDelete] Failed to delete ticket ${row.channel_id}: ${err.message}`);
+          }
+        }
+      } else {
+        logger.debug('[AutoDelete] No stale closed tickets found');
+      }
+
+    } catch (err) {
+      logger.error('[AutoClose] autoCloseStaleTickets error:', err.message);
+    }
   }
 
   async runScheduledRankSync() {
