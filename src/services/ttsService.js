@@ -7,7 +7,7 @@
 //
 // espeak-ng produces a WAV file which discord.js can play directly via ffmpeg.
 
-import { existsSync, unlinkSync } from 'fs';
+import { existsSync, unlinkSync, statSync } from 'fs';
 import { join } from 'path';
 import { execFile as execFileCb } from 'child_process';
 import { promisify } from 'util';
@@ -26,11 +26,39 @@ const execFile = promisify(execFileCb);
  */
 export async function synthesizeSpeech(text) {
   const tmpFile = join('/tmp', `phantom_tts_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
+  const args = ['-w', tmpFile, text];
 
-  await execFile('espeak-ng', ['-w', tmpFile, text]);
+  logger.debug(`[TTS_SERVICE] Invoking espeak-ng with args: ${JSON.stringify(args)}`);
+  logger.debug(`[TTS_SERVICE] Full command: espeak-ng ${args.map(a => JSON.stringify(a)).join(' ')}`);
+
+  try {
+    const { stdout, stderr } = await execFile('espeak-ng', args);
+    if (stderr) {
+      logger.warn(`[TTS_SERVICE] espeak-ng stderr: ${stderr}`);
+    }
+    if (stdout) {
+      logger.debug(`[TTS_SERVICE] espeak-ng stdout: ${stdout}`);
+    }
+  } catch (err) {
+    logger.error(`[TTS_SERVICE] espeak-ng execFile threw an error: ${err.message}`, {
+      exitCode: err.code,
+      signal: err.signal,
+      stderr: err.stderr ?? '(none)',
+      stdout: err.stdout ?? '(none)',
+    });
+    throw err;
+  }
+
+  logger.debug(`[TTS_SERVICE] espeak-ng exited cleanly, checking output file: ${tmpFile}`);
 
   if (!existsSync(tmpFile)) {
     throw new Error('espeak-ng did not produce an output file');
+  }
+
+  const { size } = statSync(tmpFile);
+  logger.debug(`[TTS_SERVICE] Output file size: ${size} bytes`);
+  if (size <= 100) {
+    throw new Error(`espeak-ng output file is suspiciously small (${size} bytes) — synthesis likely failed`);
   }
 
   logger.debug(`[TTS_SERVICE] espeak-ng wrote → ${tmpFile}`);
