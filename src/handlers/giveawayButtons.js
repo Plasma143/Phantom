@@ -16,6 +16,7 @@ import {
     createGiveawayButtons
 } from '../services/giveawayService.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
+import { getUserLevelData } from '../utils/database.js';
 
 
 
@@ -83,6 +84,37 @@ export const giveawayJoinHandler = {
                         ],
                         flags: MessageFlags.Ephemeral
                     });
+                }
+
+                // ── Account age check ─────────────────────────────────────────
+                const minAgeDays = giveaway.minAccountAgeDays ?? 7;
+                if (minAgeDays > 0) {
+                    const accountAgeDays = Math.floor((Date.now() - interaction.user.createdTimestamp) / 86_400_000);
+                    if (accountAgeDays < minAgeDays) {
+                        return interaction.reply({
+                            embeds: [errorEmbed(
+                                'Requirements Not Met',
+                                `Your Discord account must be at least **${minAgeDays} days old** to enter.\nYour account is **${accountAgeDays} day${accountAgeDays === 1 ? '' : 's'}** old.`
+                            )],
+                            flags: MessageFlags.Ephemeral,
+                        });
+                    }
+                }
+
+                // ── Server message count check ────────────────────────────────
+                const minMessages = giveaway.minMessages ?? 10;
+                if (minMessages > 0) {
+                    const levelData = await getUserLevelData(client, interaction.guildId, userId);
+                    const userMessages = levelData.messageCount || 0;
+                    if (userMessages < minMessages) {
+                        return interaction.reply({
+                            embeds: [errorEmbed(
+                                'Requirements Not Met',
+                                `You need at least **${minMessages} messages** sent in this server to enter.\nYou currently have **${userMessages} message${userMessages === 1 ? '' : 's'}**.`
+                            )],
+                            flags: MessageFlags.Ephemeral,
+                        });
+                    }
                 }
 
                 // Atomically update participants
@@ -442,6 +474,3 @@ export const giveawayViewHandler = {
         }
     }
 };
-
-
-
