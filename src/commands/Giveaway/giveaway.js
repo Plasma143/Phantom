@@ -76,6 +76,8 @@ export default {
       .addIntegerOption(opt => opt.setName('winners').setDescription('Number of winners').setMinValue(1).setMaxValue(10).setRequired(true))
       .addStringOption(opt => opt.setName('prize').setDescription('The prize being given away').setRequired(true))
       .addChannelOption(opt => opt.setName('channel').setDescription('Channel to post in (defaults to current)').addChannelTypes(ChannelType.GuildText))
+      .addIntegerOption(opt => opt.setName('min_account_age').setDescription('Minimum Discord account age in days to enter (default: 7)').setMinValue(0).setMaxValue(365))
+      .addIntegerOption(opt => opt.setName('min_messages').setDescription('Minimum messages sent in this server to enter (default: 10)').setMinValue(0).setMaxValue(10000))
     )
     // --- DELETE ---
     .addSubcommand(sub => sub
@@ -110,6 +112,8 @@ export default {
         const winnerCount    = interaction.options.getInteger('winners');
         const prize          = interaction.options.getString('prize');
         const targetChannel  = interaction.options.getChannel('channel') || interaction.channel;
+        const minAccountAgeDays = interaction.options.getInteger('min_account_age') ?? 7;
+        const minMessages       = interaction.options.getInteger('min_messages') ?? 10;
 
         const durationMs = parseDuration(durationString);
         validateWinnerCount(winnerCount);
@@ -133,6 +137,8 @@ export default {
           isEnded: false,
           ended: false,
           createdAt: new Date().toISOString(),
+          minAccountAgeDays,
+          minMessages,
         };
 
         const embed = createGiveawayEmbed(initialData, 'active');
