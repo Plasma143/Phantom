@@ -197,6 +197,16 @@ export function createGiveawayEmbed(giveaway, status, winners = []) {
             embed.addFields({ name: '⏰ Ends', value: `<t:${Math.floor(endTime / 1000)}:R>`, inline: false });
         }
 
+        // Show entry requirements if any are set
+        const minAge = giveaway.minAccountAgeDays ?? 7;
+        const minMsgs = giveaway.minMessages ?? 10;
+        if (minAge > 0 || minMsgs > 0) {
+            const reqs = [];
+            if (minAge > 0) reqs.push(`Account age: ${minAge}+ days`);
+            if (minMsgs > 0) reqs.push(`Server messages: ${minMsgs}+`);
+            embed.addFields({ name: '📋 Requirements', value: reqs.join('\n'), inline: false });
+        }
+
         embed.setTimestamp();
         
         return embed;
@@ -526,6 +536,3 @@ export async function checkGiveaways(client) {
     logger.error('Error checking giveaways:', error);
   }
 }
-
-
-
