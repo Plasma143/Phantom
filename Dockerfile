@@ -1,7 +1,7 @@
 FROM node:20-alpine
 
 # Install ffmpeg for discord-player audio processing
-RUN apk add --no-cache ffmpeg
+RUN apk add --no-cache ffmpeg python3 make g++ opus-dev
 
 # Create app directory
 WORKDIR /usr/src/app
