@@ -1,7 +1,13 @@
-FROM node:20-alpine
+FROM node:20-slim
 
 # Install ffmpeg for discord-player audio processing
-RUN apk add --no-cache ffmpeg python3 make g++ opus-dev
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    python3 \
+    make \
+    g++ \
+    libopus-dev \
+  && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
 WORKDIR /usr/src/app
