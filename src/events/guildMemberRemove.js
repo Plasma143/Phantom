@@ -11,6 +11,7 @@ import { logger } from '../utils/logger.js';
 import { getConfigValue } from '../services/guildConfig.js';
 import { getRobloxLink } from '../utils/robloxDb.js';
 import { updateGroupMemberRank } from '../utils/roblox.js';
+import { getSubscription, getTier, isOwner } from '../web/stripePayments.js';
 
 export default {
   name: Events.GuildMemberRemove,
@@ -179,6 +180,11 @@ export default {
         try {
             const roblox = await getConfigValue({ db: member.client.db }, guild.id, 'roblox', {});
             if (roblox.autoDemote?.enabled && roblox.groupId && roblox.openCloudKey) {
+                // Premium gate
+                const sub  = await getSubscription(guild.id);
+                const tier = isOwner(guild.ownerId) ? 'enterprise' : getTier(sub);
+                if (tier === 'free') return;
+
                 const link = await getRobloxLink(user.id);
                 if (link?.roblox_id) {
                     const exileRankId = roblox.autoDemote.exileRankId ?? 0;
