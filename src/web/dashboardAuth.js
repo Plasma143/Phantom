@@ -968,7 +968,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
                 const selectedIds = autoRank.watchChannelIds?.length
                   ? autoRank.watchChannelIds
                   : autoRank.watchChannelId ? [autoRank.watchChannelId] : [];
-                return channels.filter(c => c.type === 0).map(c =>
+                return textChannels.filter(c => c.type === 0).map(c =>
                   `<option value="${c.id}" ${selectedIds.includes(c.id) ? 'selected' : ''}>#${c.name}</option>`
                 ).join('');
               })()}
