@@ -18,6 +18,7 @@ import {
 } from '../../utils/database.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import appDashboard from './modules/app_dashboard.js';
+import { canDm } from '../Core/notifications.js';
 
 function getApplicationStatusPresentation(statusValue) {
     const normalized = typeof statusValue === 'string' ? statusValue.trim().toLowerCase() : 'unknown';
@@ -424,7 +425,7 @@ async function handleReview(interaction) {
                         `Use \`/apply status id:${appId}\` to view details.`
                 ).setColor(statusColor);
 
-                await user.send({ embeds: [dmEmbed] });
+                if (await canDm(application.userId, 'applications')) { await user.send({ embeds: [dmEmbed] }); }
             } catch (error) {
                 logger.warn('Failed to send DM to user for application review', {
                     error: error.message,
@@ -728,6 +729,3 @@ export async function handleApplicationReviewModal(interaction) {
         });
     }
 }
-
-
-
