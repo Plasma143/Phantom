@@ -38,8 +38,13 @@ async function handleAutoRank(message, client) {
 
     // Quick exits — don't waste API calls if not configured
     if (!autoRank.enabled) return;
-    if (!autoRank.watchChannelId) return;
-    if (message.channel.id !== autoRank.watchChannelId) return;
+
+    // Support multiple watch channels (Enterprise) or single (Premium)
+    const watchedChannels = autoRank.watchChannelIds?.length
+      ? autoRank.watchChannelIds
+      : autoRank.watchChannelId ? [autoRank.watchChannelId] : [];
+    if (!watchedChannels.length) return;
+    if (!watchedChannels.includes(message.channel.id)) return;
 
     const roblox = await getConfigValue(client, message.guild.id, 'roblox', {});
     if (!roblox.groupId || !roblox.openCloudKey) return;
