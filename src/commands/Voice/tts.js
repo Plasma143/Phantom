@@ -1,6 +1,6 @@
 // src/commands/Voice/tts.js
 // Voice TTS using @discordjs/voice directly.
-// Google TTS → ffmpeg (OggOpus) → voice channel.
+// Google TTS → MP3 buffer → createAudioResource (Arbitrary) → voice channel
 import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import {
   joinVoiceChannel,
@@ -12,13 +12,13 @@ import {
   StreamType,
   getVoiceConnection,
 } from '@discordjs/voice';
-import { spawn } from 'child_process';
+import { Readable } from 'stream';
 import { logger } from '../../utils/logger.js';
 
 export const ttsSessions = new Map();
 export function restoreTTSSessions() {}
 
-// ── Fetch Google TTS and pipe through ffmpeg → OggOpus stream ────────────────
+// ── Fetch Google TTS MP3 and create an audio resource ────────────────────────
 async function createTTSResource(text) {
   const clean = text.replace(/https?:\/\/\S+/g, 'link').slice(0, 200);
   const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(clean)}&tl=en&client=tw-ob`;
@@ -28,22 +28,11 @@ async function createTTSResource(text) {
   });
   if (!resp.ok) throw new Error(`Google TTS HTTP ${resp.status}`);
   const mp3 = Buffer.from(await resp.arrayBuffer());
+  if (mp3.length < 100) throw new Error('Google TTS returned empty audio');
 
-  // Convert MP3 → OggOpus via ffmpeg
-  const ff = spawn('ffmpeg', [
-    '-i', 'pipe:0',
-    '-c:a', 'libopus',
-    '-b:a', '96k',
-    '-ar', '48000',
-    '-ac', '2',
-    '-f', 'ogg',
-    'pipe:1',
-    '-loglevel', 'error',
-  ]);
-  ff.stdin.write(mp3);
-  ff.stdin.end();
-
-  return createAudioResource(ff.stdout, { inputType: StreamType.OggOpus });
+  return createAudioResource(Readable.from(mp3), {
+    inputType: StreamType.Arbitrary,
+  });
 }
 
 // ── Queue processor ───────────────────────────────────────────────────────────
@@ -52,12 +41,11 @@ async function playNext(guildId) {
   if (!s || !s.queue.length || s.playing) return;
   const { username, text } = s.queue.shift();
   s.playing = true;
-
   try {
     const resource = await createTTSResource(`${username} says ${text}`);
     s.player.play(resource);
   } catch (e) {
-    logger.error('[TTS] createTTSResource error:', e.message);
+    logger.error('[TTS] error:', e.message);
     s.textChannel?.send(`⚠️ TTS error: \`${e.message}\``).catch(() => {});
     s.playing = false;
     playNext(guildId);
@@ -80,7 +68,7 @@ export default {
     .setName('tts')
     .setDescription('Voice TTS — reads messages from this channel aloud in your VC')
     .setDMPermission(false)
-    .addSubcommand(s => s.setName('join').setDescription('Join your VC and read messages aloud'))
+    .addSubcommand(s => s.setName('join').setDescription('Join your VC and start reading messages aloud'))
     .addSubcommand(s => s.setName('leave').setDescription('Stop TTS and leave VC'))
     .addSubcommand(s => s.setName('clear').setDescription('Clear the TTS queue'))
     .addSubcommand(s => s.setName('test').setDescription('Test TTS audio')),
@@ -99,14 +87,10 @@ export default {
       if (ttsSessions.has(guildId)) {
         const old = ttsSessions.get(guildId);
         try { old.player.stop(); } catch {}
-        try {
-          const conn = getVoiceConnection(guildId);
-          if (conn) conn.destroy();
-        } catch {}
+        try { old.connection.destroy(); } catch {}
         ttsSessions.delete(guildId);
       }
 
-      // Create voice connection
       const connection = joinVoiceChannel({
         channelId: vc.id,
         guildId,
@@ -114,11 +98,9 @@ export default {
         selfDeaf: false,
       });
 
-      // Create audio player
       const player = createAudioPlayer();
       connection.subscribe(player);
 
-      // When track finishes, play next in queue
       player.on(AudioPlayerStatus.Idle, () => {
         const s = ttsSessions.get(guildId);
         if (!s) return;
@@ -131,12 +113,11 @@ export default {
         const s = ttsSessions.get(guildId);
         if (s) {
           s.playing = false;
-          s.textChannel?.send(`⚠️ TTS error: \`${err.message}\``).catch(() => {});
+          s.textChannel?.send(`⚠️ TTS player error: \`${err.message}\``).catch(() => {});
           playNext(guildId);
         }
       });
 
-      // Handle disconnects
       connection.on(VoiceConnectionStatus.Disconnected, async () => {
         try {
           await Promise.race([
@@ -167,9 +148,9 @@ export default {
     if (sub === 'test') {
       const s = ttsSessions.get(guildId);
       if (!s) return interaction.reply({ content: '❌ Use `/tts join` first.', flags: MessageFlags.Ephemeral });
-      await interaction.reply({ content: '🎵 Testing TTS...', flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: '🎵 Fetching TTS audio...', flags: MessageFlags.Ephemeral });
       try {
-        const resource = await createTTSResource('This is a TTS test from Phantom Bot.');
+        const resource = await createTTSResource('This is a TTS test from Phantom Bot. Can you hear me?');
         s.player.play(resource);
         await interaction.channel.send('🔊 TTS test playing — can you hear it?');
       } catch (e) {
