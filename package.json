@@ -17,7 +17,7 @@
   "dependencies": {
     "@discord-player/extractor": "^7.2.0",
     "@discordjs/rest": "^2.6.1",
-    "@snazzah/davey": "^0.1.11",
+    "@snazzah/davey": "^0.1.6",
     "axios": "^1.15.2",
     "discord-player": "^7.2.0",
     "discord.js": "^14.15.3",
@@ -31,7 +31,8 @@
     "zod": "^3.25.76",
     "@discordjs/voice": "^0.17.0",
     "opusscript": "^0.1.1",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "libsodium-wrappers": "^0.7.13"
   },
   "engines": {
     "node": ">=18.0.0"
