@@ -18,6 +18,7 @@ import { robloxOAuthRouter } from './web/robloxOAuth.js';
 import { dashboardAuthRouter } from './web/dashboardAuth.js';
 import { stripeRouter } from './web/stripePayments.js';
 import { setClient } from './utils/clientRef.js';
+import { restoreTTSSessions } from './commands/Voice/tts.js';
 
 class PhantomBot extends Client {
   constructor() {
@@ -90,6 +91,10 @@ class PhantomBot extends Client {
       await this.login(this.config.bot.token);
       setClient(this);
       startupLog('Discord login successful');
+
+      startupLog('Restoring TTS sessions...');
+      await restoreTTSSessions(this);
+      startupLog('TTS sessions restored');
 
       startupLog('Initialising music player...');
       const player = new Player(this);
