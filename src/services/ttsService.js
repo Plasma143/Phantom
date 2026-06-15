@@ -1,6 +1,6 @@
 // src/services/ttsService.js
 //
-// Offline Text-to-Speech service using SVOX Pico TTS (pico-tts npm package).
+// Offline Text-to-Speech service using SVOX Pico TTS (pico2wave CLI).
 //
 // No API keys, no billing, no network calls — runs entirely on-device.
 // Requires the libttspico system packages installed in the container/host
@@ -10,47 +10,43 @@
 
 import { existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { execFile as execFileCb } from 'child_process';
+import { promisify } from 'util';
 import { logger } from '../utils/logger.js';
+
+const execFile = promisify(execFileCb);
 
 // ── Synthesise text → WAV temp file path ─────────────────────────────────────
 /**
- * Synthesises `text` using SVOX Pico TTS (offline, no API key required) and
- * writes the resulting WAV to a temporary file.  Returns the file path so the
- * caller can stream it to Discord and delete it afterwards.
+ * Synthesises `text` using SVOX Pico TTS (pico2wave CLI, offline, no API key
+ * required) and writes the resulting WAV to a temporary file. Returns the file
+ * path so the caller can stream it to Discord and delete it afterwards.
  *
  * @param {string} text  Plain text to synthesise.
  * @returns {Promise<string>}  Absolute path to the temporary WAV file.
  */
 export async function synthesizeSpeech(text) {
-  const { default: pico } = await import('pico-tts');
-
   const tmpFile = join('/tmp', `phantom_tts_${Date.now()}_${Math.random().toString(36).slice(2)}.wav`);
 
-  // pico-tts wraps pico2wave; it returns a Buffer containing WAV audio.
-  const wavBuffer = await pico(text, { lang: 'en-US' });
+  await execFile('pico2wave', ['-l', 'en-US', '-w', tmpFile, text]);
 
-  if (!wavBuffer || wavBuffer.length < 50) {
-    throw new Error('pico-tts returned empty audio');
+  if (!existsSync(tmpFile)) {
+    throw new Error('pico2wave did not produce an output file');
   }
 
-  const { writeFileSync } = await import('fs');
-  writeFileSync(tmpFile, wavBuffer);
-  logger.debug(`[TTS_SERVICE] Wrote ${wavBuffer.length} bytes → ${tmpFile}`);
+  logger.debug(`[TTS_SERVICE] pico2wave wrote → ${tmpFile}`);
   return tmpFile;
 }
 
 // ── Split long text into sentence-aware chunks ────────────────────────────────
 /**
- * Splits `text` into sentence-aware chunks (pico2wave handles up to ~32 KB of
- * text, but shorter chunks produce more natural pauses), synthesises each chunk
- * in order, and returns an array of temp WAV file paths.
+ * Splits `text` into sentence-aware chunks, synthesises each chunk in order,
+ * and returns an array of temp WAV file paths.
  *
  * @param {string} text
  * @returns {Promise<string[]>}
  */
 export async function synthesizeSpeechChunked(text) {
-  // pico2wave can handle long text natively, but we chunk at sentence
-  // boundaries so each segment plays as a natural speech unit.
   const MAX_CHARS = 300;
 
   const sentences = text.match(/[^.!?]+[.!?]*/g) ?? [text];
@@ -64,7 +60,6 @@ export async function synthesizeSpeechChunked(text) {
       current = candidate;
     } else {
       if (current) chunks.push(current);
-      // If a single sentence is still too long, hard-split by words.
       if (sentence.trim().length > MAX_CHARS) {
         const words = sentence.trim().split(/\s+/);
         let wordChunk = '';
