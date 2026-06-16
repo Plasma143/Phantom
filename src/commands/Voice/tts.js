@@ -1,8 +1,7 @@
 // src/commands/Voice/tts.js
 //
-// Bug fixes applied:
+// Bug fixes applied (merged from two debugging sessions):
 //   - Fixed s.playing never being reset on synthesis error — queue no longer stalls permanently
-//   - Fixed fileQueue comment (was .mp3, now correctly .wav)
 //   - Added guard in playNextFile: skip if connection is no longer Ready before playing
 //   - Added guard in handleTTSMessage: ignore messages sent by the bot itself
 //   - connectToVoice now reuses existing connection correctly without double-subscribing
@@ -11,6 +10,10 @@
 //   - Added connection.destroy() timeout fallback if Ready never fires (prevents hanging joins)
 //   - Player Idle handler now guards against null session after teardown
 //   - synthesizeSpeechChunked failure now properly resets playing state
+//   - ROOT CAUSE FIX: createAudioResource was never given an inputType, so @discordjs/voice
+//     defaulted to StreamType.Unknown and tried to auto-probe the WAV — this failed silently
+//     on Railway. Now pipes espeak-ng's WAV output through ffmpeg to OGG Opus and passes
+//     StreamType.OggOpus explicitly, bypassing the probe step entirely.
 
 import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import {
@@ -21,8 +24,9 @@ import {
   createAudioResource,
   AudioPlayerStatus,
   VoiceConnectionStatus,
+  StreamType,
 } from '@discordjs/voice';
-import { createReadStream } from 'fs';
+import { spawn } from 'child_process';
 import { synthesizeSpeechChunked, cleanupTempFile } from '../../services/ttsService.js';
 import { logger } from '../../utils/logger.js';
 
@@ -129,9 +133,40 @@ function playNextFile(guildId) {
   }
 
   const file = s.fileQueue.shift();
+  s.currentFile = file;
+
   try {
-    const resource = createAudioResource(createReadStream(file));
-    s.currentFile = file;
+    // espeak-ng outputs 16kHz mono WAV. @discordjs/voice needs 48kHz stereo Opus.
+    // Pipe through ffmpeg explicitly → OGG Opus so we can use StreamType.OggOpus.
+    // This bypasses the format-probing step that fails silently with raw WAV streams.
+    const ffmpeg = spawn('ffmpeg', [
+      '-i', file,        // input: WAV from espeak-ng
+      '-ac', '2',         // stereo
+      '-ar', '48000',     // 48kHz (Discord standard)
+      '-acodec', 'libopus',
+      '-b:a', '96k',
+      '-f', 'ogg',
+      'pipe:1',           // output to stdout
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    ffmpeg.stderr.on('data', d => logger.debug(`[TTS ffmpeg] ${d.toString().trim()}`));
+
+    ffmpeg.on('error', err => {
+      logger.error('[TTS] ffmpeg spawn error:', err.message);
+      cleanupTempFile(file);
+      const sess = ttsSessions.get(guildId);
+      if (sess) {
+        sess.currentFile = null;
+        sess.playing = false;
+        sess.textChannel?.send(`⚠️ TTS ffmpeg error: \`${err.message}\``).catch(() => {});
+        playNextMessage(guildId);
+      }
+    });
+
+    const resource = createAudioResource(ffmpeg.stdout, {
+      inputType: StreamType.OggOpus,
+    });
+
     s.player.play(resource);
   } catch (err) {
     logger.error('[TTS] createAudioResource error:', err.message);
@@ -173,7 +208,7 @@ async function playNextMessage(guildId) {
   } catch (err) {
     logger.error('[TTS] Synthesis error:', err.message);
 
-    // BUG FIX: always reset playing on error so the queue doesn't stall
+    // Always reset playing on error so the queue doesn't stall
     const current = ttsSessions.get(guildId);
     if (current) {
       current.playing = false;
