@@ -29,6 +29,7 @@ import {
 import { spawn } from 'child_process';
 import { synthesizeSpeechChunked, cleanupTempFile } from '../../services/ttsService.js';
 import { logger } from '../../utils/logger.js';
+import { InteractionHelper } from '../../utils/interactionHelper.js';
 
 // ── Active TTS sessions keyed by guildId ─────────────────────────────────────
 // Each session: { voiceChannel, textChannel, textChannelId, player,
@@ -281,7 +282,11 @@ export default {
         });
       }
 
-      await interaction.deferReply();
+      const deferred = await InteractionHelper.safeDefer(interaction);
+      if (!deferred) {
+        logger.warn(`[TTS] Could not defer join interaction for guild ${guildId}, aborting join`);
+        return;
+      }
 
       // Tear down any existing session cleanly before starting a new one
       if (ttsSessions.has(guildId)) {
@@ -360,7 +365,11 @@ export default {
         });
       }
 
-      await interaction.deferReply({ ephemeral: true });
+      const deferred = await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
+      if (!deferred) {
+        logger.warn(`[TTS] Could not defer test interaction for guild ${guildId}, aborting test`);
+        return;
+      }
 
       try {
         const files = await synthesizeSpeechChunked(
