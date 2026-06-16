@@ -160,6 +160,11 @@ const createTicketHandler = {
             .setValue('appeal')
             .setEmoji('⚖️'),
           new StringSelectMenuOptionBuilder()
+            .setLabel('Application')
+            .setDescription('Apply to join the group or a staff role')
+            .setValue('application')
+            .setEmoji('📝'),
+          new StringSelectMenuOptionBuilder()
             .setLabel('Other')
             .setDescription('Something not listed above')
             .setValue('other')
@@ -211,6 +216,7 @@ const createTicketModalHandler = {
         billing:         '💳 Billing / Subscription',
         partnership:     '🤝 Partnership',
         appeal:          '⚖️ Appeal',
+        application:     '📝 Application',
         other:           '📋 Other',
       };
       const categoryLabel = categoryLabels[categoryValue] || '💬 General Support';
@@ -275,6 +281,29 @@ const createTicketModalHandler = {
               footer: { text: 'Phantom Studios Partnerships' },
             }],
             components: [row],
+          });
+        }
+
+        if (ticketChannel && categoryValue === 'application') {
+          await ticketChannel.send({
+            embeds: [{
+              title: '📝 Application',
+              description: [
+                'Thank you for your interest in applying. A staff member will review your application shortly.',
+                '',
+                '**Please answer the following questions:**',
+                '> **1.** What is your Roblox username?',
+                '> **2.** How old are you?',
+                '> **3.** What is your current rank or experience in similar groups?',
+                '> **4.** Why do you want to join?',
+                '> **5.** How active are you and what is your time zone?',
+                '> **6.** Do you have any previous experience relevant to the role you are applying for?',
+                '',
+                'Please answer all questions in your next message. A staff member will be with you shortly.',
+              ].join('\n'),
+              color: 0x7c3aed,
+              footer: { text: 'Applications are reviewed by staff only.' },
+            }],
           });
         }
       } else {
@@ -849,6 +878,7 @@ export const ticketCategorySelectMenu = {
         billing:          '💳 Billing / Subscription',
         partnership:      '🤝 Partnership',
         appeal:           '⚖️ Appeal',
+        application:      '📝 Application',
         other:            '📋 Other',
       };
 
