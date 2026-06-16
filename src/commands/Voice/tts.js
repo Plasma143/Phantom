@@ -29,6 +29,7 @@ import {
 import { spawn } from 'child_process';
 import { synthesizeSpeechChunked, cleanupTempFile } from '../../services/ttsService.js';
 import { logger } from '../../utils/logger.js';
+import { InteractionHelper } from '../../utils/interactionHelper.js';
 
 // ── Active TTS sessions keyed by guildId ─────────────────────────────────────
 // Each session: { voiceChannel, textChannel, textChannelId, player,
@@ -66,30 +67,64 @@ function connectToVoice(channel, player) {
       adapterCreator: channel.guild.voiceAdapterCreator,
       selfDeaf: false,
       selfMute: false,
+      debug: true,
     });
 
-    // Re-configure networking if connection drops back to Connecting from Ready
-    connection.on('stateChange', (oldState, newState) => {
+    // DIAGNOSTIC: surface the actual networking failure reason (UDP/IP-discovery
+    // errors, etc.) instead of only seeing state names with no explanation.
+    connection.on('error', (error) => {
+      logger.error(`[TTS] voice connection error: ${error?.message}`, error);
+    });
+    connection.on('debug', (message) => {
+      logger.debug(`[TTS][NW] ${message}`);
+    });
+
+    const joinStartedAt = Date.now();
+    const instrumentedNetworking = new WeakSet();
+
+    // DIAGNOSTIC (layer 2): the outer 'connecting -> connecting' self-transition
+    // we keep seeing is the INNER networking state machine moving between
+    // sub-stages (OpeningWs=0, Identifying=1, UdpHandshaking=2, SelectingProtocol=3,
+    // Ready=4) without it ever surfacing as a 'debug' or 'error' event on the
+    // connection itself. And 'connecting -> signalling' happens when that inner
+    // voice websocket closes with any code other than 4014 — silently, with no
+    // event we were previously listening to. Both require grabbing
+    // connection.state.networking directly and listening on IT.
+    const instrumentNetworking = (networking) => {
+      if (!networking || instrumentedNetworking.has(networking)) return;
+      instrumentedNetworking.add(networking);
+      networking.on('stateChange', (oldNw, newNw) => {
+        logger.debug(`[TTS][NW-STATE] ${oldNw.code} -> ${newNw.code} (+${Date.now() - joinStartedAt}ms)`);
+      });
+      networking.on('close', (code) => {
+        logger.debug(`[TTS][NW-CLOSE] websocket closed with code=${code} (+${Date.now() - joinStartedAt}ms)`);
+      });
+    };
+
+    // Single named listener (avoids stacking duplicate listeners): logs every
+    // state transition with a timestamp, and re-configures networking if the
+    // connection drops back to Connecting from Ready.
+    const handleStateChange = (oldState, newState) => {
+      logger.debug(
+        `[TTS] voice state ${oldState.status} -> ${newState.status} (+${Date.now() - joinStartedAt}ms)`
+      );
+      if (newState.networking) instrumentNetworking(newState.networking);
       if (
         oldState.status === VoiceConnectionStatus.Ready &&
         newState.status === VoiceConnectionStatus.Connecting
       ) {
         connection.configureNetworking();
       }
-    });
+    };
+    connection.on('stateChange', handleStateChange);
 
-    // DIAGNOSTIC: log every state transition with a timestamp so if this still
-    // times out, we know exactly which phase it stalled in (Signalling vs
-    // Connecting vs never leaving the initial state) instead of guessing again.
-    const joinStartedAt = Date.now();
-    connection.on('stateChange', (oldState, newState) => {
-      logger.debug(
-        `[TTS] voice state ${oldState.status} -> ${newState.status} (+${Date.now() - joinStartedAt}ms)`
-      );
-    });
+    const cleanupListeners = () => {
+      connection.off('stateChange', handleStateChange);
+    };
 
     // Subscribe the player only once the connection is fully Ready
     connection.once(VoiceConnectionStatus.Ready, () => {
+      cleanupListeners();
       connection.subscribe(player);
       resolve(connection);
     });
@@ -104,6 +139,7 @@ function connectToVoice(channel, player) {
         // Recovered — reconnect networking
         connection.configureNetworking();
       } catch {
+        cleanupListeners();
         connection.destroy();
         ttsSessions.delete(channel.guild.id);
       }
@@ -114,6 +150,7 @@ function connectToVoice(channel, player) {
     // music works fine on this same droplet, suggesting 15s may simply be
     // too tight for this network path's handshake.)
     const timeout = setTimeout(() => {
+      cleanupListeners();
       connection.destroy();
       reject(new Error('Voice connection timed out after 30s'));
     }, 30_000);
@@ -281,7 +318,11 @@ export default {
         });
       }
 
-      await interaction.deferReply();
+      const deferred = await InteractionHelper.safeDefer(interaction);
+      if (!deferred) {
+        logger.warn(`[TTS] Could not defer join interaction for guild ${guildId}, aborting join`);
+        return;
+      }
 
       // Tear down any existing session cleanly before starting a new one
       if (ttsSessions.has(guildId)) {
@@ -360,7 +401,11 @@ export default {
         });
       }
 
-      await interaction.deferReply({ ephemeral: true });
+      const deferred = await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
+      if (!deferred) {
+        logger.warn(`[TTS] Could not defer test interaction for guild ${guildId}, aborting test`);
+        return;
+      }
 
       try {
         const files = await synthesizeSpeechChunked(
