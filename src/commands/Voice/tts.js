@@ -78,6 +78,16 @@ function connectToVoice(channel, player) {
       }
     });
 
+    // DIAGNOSTIC: log every state transition with a timestamp so if this still
+    // times out, we know exactly which phase it stalled in (Signalling vs
+    // Connecting vs never leaving the initial state) instead of guessing again.
+    const joinStartedAt = Date.now();
+    connection.on('stateChange', (oldState, newState) => {
+      logger.debug(
+        `[TTS] voice state ${oldState.status} -> ${newState.status} (+${Date.now() - joinStartedAt}ms)`
+      );
+    });
+
     // Subscribe the player only once the connection is fully Ready
     connection.once(VoiceConnectionStatus.Ready, () => {
       connection.subscribe(player);
@@ -99,11 +109,14 @@ function connectToVoice(channel, player) {
       }
     });
 
-    // Fail fast if Ready never fires within 15 seconds
+    // Fail fast if Ready never fires within 30 seconds.
+    // (Was 15s — bumped up since discord-player imposes no such limit and
+    // music works fine on this same droplet, suggesting 15s may simply be
+    // too tight for this network path's handshake.)
     const timeout = setTimeout(() => {
       connection.destroy();
-      reject(new Error('Voice connection timed out after 15s'));
-    }, 15_000);
+      reject(new Error('Voice connection timed out after 30s'));
+    }, 30_000);
 
     // Clear the timeout if we resolved already
     connection.once(VoiceConnectionStatus.Ready, () => clearTimeout(timeout));
