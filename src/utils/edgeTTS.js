@@ -8,7 +8,7 @@
 //
 // npm install @andresaya/edge-tts
 
-const { EdgeTTS, Constants } = require('@andresaya/edge-tts');
+import { EdgeTTS, Constants } from '@andresaya/edge-tts';
 
 /**
  * @param {string} text
@@ -16,7 +16,7 @@ const { EdgeTTS, Constants } = require('@andresaya/edge-tts');
  * @param {{rate?: string|number, pitch?: string|number, volume?: string|number}} [opts]
  * @returns {Promise<Buffer>} WebM/Opus audio buffer
  */
-async function synthesizeSpeech(text, voiceId, opts = {}) {
+export async function synthesizeSpeech(text, voiceId, opts = {}) {
   const tts = new EdgeTTS();
   await tts.synthesize(text, voiceId, {
     outputFormat: Constants.OUTPUT_FORMAT.WEBM_24KHZ_16BIT_MONO_OPUS,
@@ -24,5 +24,3 @@ async function synthesizeSpeech(text, voiceId, opts = {}) {
   });
   return tts.toBuffer();
 }
-
-module.exports = { synthesizeSpeech };
