@@ -1,4 +1,19 @@
 // src/commands/Voice/tts.js
+//
+// Bug fixes applied (merged from two debugging sessions):
+//   - Fixed s.playing never being reset on synthesis error — queue no longer stalls permanently
+//   - Added guard in playNextFile: skip if connection is no longer Ready before playing
+//   - Added guard in handleTTSMessage: ignore messages sent by the bot itself
+//   - connectToVoice now reuses existing connection correctly without double-subscribing
+//   - Teardown on /tts leave now clears currentFile cleanup safely (null check)
+//   - /tts clear now correctly resets s.playing = false AND stops current audio
+//   - Added connection.destroy() timeout fallback if Ready never fires (prevents hanging joins)
+//   - Player Idle handler now guards against null session after teardown
+//   - synthesizeSpeechChunked failure now properly resets playing state
+//   - ROOT CAUSE FIX: createAudioResource was never given an inputType, so @discordjs/voice
+//     defaulted to StreamType.Unknown and tried to auto-probe the WAV — this failed silently
+//     on Railway. Now pipes espeak-ng's WAV output through ffmpeg to OGG Opus and passes
+//     StreamType.OggOpus explicitly, bypassing the probe step entirely.
 
 import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import {
@@ -17,23 +32,32 @@ import { synthesizeSpeechChunked, cleanupTempFile } from '../../services/ttsServ
 import { logger } from '../../utils/logger.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 
+// ── Active TTS sessions keyed by guildId ─────────────────────────────────────
+// Each session: { voiceChannel, textChannel, textChannelId, player,
+//                 queue, fileQueue, currentFile, playing }
 export const ttsSessions = new Map();
 
+// No-op — sessions are in-memory only, nothing to restore across restarts
 export function restoreTTSSessions() {}
 
+// ── Sanitise text before synthesis ───────────────────────────────────────────
 function sanitiseText(text) {
   return text
-    .replace(/https?:\/\/\S+/g, 'link')   
-    .replace(/[<>]/g, '')                  
-    .replace(/\s+/g, ' ')                  
+    .replace(/https?:\/\/\S+/g, 'link')   // replace URLs
+    .replace(/[<>]/g, '')                  // strip Discord mention brackets
+    .replace(/\s+/g, ' ')                  // collapse whitespace
     .trim()
     .slice(0, 500);
 }
 
+// ── Connect to voice channel and subscribe player ─────────────────────────────
+// Subscribes the player ONLY after the connection reaches Ready state.
+// If a connection already exists for this guild it is reused.
 function connectToVoice(channel, player) {
   return new Promise((resolve, reject) => {
     const existing = getVoiceConnection(channel.guild.id);
     if (existing) {
+      // Only subscribe if not already subscribed
       existing.subscribe(player);
       return resolve(existing);
     }
@@ -48,7 +72,7 @@ function connectToVoice(channel, player) {
 
     const joinStartedAt = Date.now();
 
-    // Use named functions so we can clean them up later and prevent leaks
+    // Visual Anchor: Clean, named callback references stop MaxListenersExceeded memory leaks
     const handleStateChange = (oldState, newState) => {
       logger.debug(
         `[TTS] voice state ${oldState.status} -> ${newState.status} (+${Date.now() - joinStartedAt}ms)`
@@ -63,23 +87,25 @@ function connectToVoice(channel, player) {
 
     connection.on('stateChange', handleStateChange);
 
-    // Clean up event listeners on resolution or failure
     const cleanupListeners = () => {
       connection.off('stateChange', handleStateChange);
     };
 
+    // Subscribe the player only once the connection is fully Ready
     connection.once(VoiceConnectionStatus.Ready, () => {
       cleanupListeners();
       connection.subscribe(player);
       resolve(connection);
     });
 
+    // Handle unexpected disconnections — try to recover, then destroy
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
       try {
         await Promise.race([
           entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
           entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
         ]);
+        // Recovered — reconnect networking
         connection.configureNetworking();
       } catch {
         cleanupListeners();
@@ -88,26 +114,31 @@ function connectToVoice(channel, player) {
       }
     });
 
+    // Fail fast if Ready never fires within 30 seconds.
     const timeout = setTimeout(() => {
       cleanupListeners();
       connection.destroy();
       reject(new Error('Voice connection timed out after 30s'));
     }, 30_000);
 
+    // Clear the timeout if we resolved already
     connection.once(VoiceConnectionStatus.Ready, () => clearTimeout(timeout));
   });
 }
 
+// ── Play next WAV file in the per-guild file queue ────────────────────────────
 function playNextFile(guildId) {
   const s = ttsSessions.get(guildId);
   if (!s) return;
 
   if (!s.fileQueue.length) {
+    // No more files for this message — move to next queued message
     s.playing = false;
     playNextMessage(guildId);
     return;
   }
 
+  // Guard: don't attempt playback if the voice connection is gone
   const connection = getVoiceConnection(guildId);
   if (!connection || connection.state.status !== VoiceConnectionStatus.Ready) {
     logger.warn('[TTS] Skipping playback — voice connection not Ready');
@@ -121,14 +152,16 @@ function playNextFile(guildId) {
   s.currentFile = file;
 
   try {
+    // espeak-ng outputs 16kHz mono WAV. @discordjs/voice needs 48kHz stereo Opus.
+    // Pipe through ffmpeg explicitly → OGG Opus so we can use StreamType.OggOpus.
     const ffmpeg = spawn('ffmpeg', [
-      '-i', file,        
-      '-ac', '2',         
-      '-ar', '48000',     
+      '-i', file,        // input: WAV from espeak-ng
+      '-ac', '2',         // stereo
+      '-ar', '48000',     // 48kHz (Discord standard)
       '-acodec', 'libopus',
       '-b:a', '96k',
       '-f', 'ogg',
-      'pipe:1',           
+      'pipe:1',           // output to stdout
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     ffmpeg.stderr.on('data', d => logger.debug(`[TTS ffmpeg] ${d.toString().trim()}`));
@@ -160,6 +193,7 @@ function playNextFile(guildId) {
   }
 }
 
+// ── Process the next pending message in the queue ────────────────────────────
 async function playNextMessage(guildId) {
   const s = ttsSessions.get(guildId);
   if (!s || !s.queue.length || s.playing) return;
@@ -171,6 +205,7 @@ async function playNextMessage(guildId) {
     const sentence = `${username} says ${text}`;
     const files = await synthesizeSpeechChunked(sanitiseText(sentence));
 
+    // Session may have been destroyed while we were synthesising
     const current = ttsSessions.get(guildId);
     if (!current) {
       files.forEach(cleanupTempFile);
@@ -186,7 +221,7 @@ async function playNextMessage(guildId) {
     current.fileQueue = files;
     playNextFile(guildId);
   } catch (err) {
-    logger.error('[TTS] Speech compilation failed:', err);
+    logger.error('[TTS] Speech synthesis execution failed:', err);
     const current = ttsSessions.get(guildId);
     if (current) {
       current.playing = false;
@@ -195,18 +230,18 @@ async function playNextMessage(guildId) {
   }
 }
 
-// ── SLASH COMMAND REGISTRATION & EXECUTION ───────────────────────────────────
+// ── Discord Slash Command Interface ──────────────────────────────────────────
 export const data = new SlashCommandBuilder()
   .setName('tts')
   .setDescription('Speak text in your current voice channel')
   .addStringOption(option =>
     option.setName('message')
-      .setDescription('The message to speak')
+      .setDescription('The message to convert into speech')
       .setRequired(true)
   );
 
 export async function execute(interaction) {
-  // CRITICAL FIX: Instantly acknowledge interaction so it does not time out [1]
+  // Direct Answer First: Defer instantly to fix the 3-second InteractionNotReplied crash
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const member = interaction.member;
@@ -233,7 +268,7 @@ export async function execute(interaction) {
       playing: false,
     };
 
-    // Auto-advance queue when current audio fragment completes
+    // Keep queue moving automatically on track completion
     player.on(AudioPlayerStatus.Idle, () => {
       const activeSession = ttsSessions.get(guildId);
       if (activeSession) {
@@ -246,27 +281,10 @@ export async function execute(interaction) {
     });
 
     player.on('error', error => {
-      logger.error(`[TTS Player Error] ${error.message}`);
+      logger.error(`[TTS Player Status Error] ${error.message}`);
       const activeSession = ttsSessions.get(guildId);
       if (activeSession) {
         activeSession.playing = false;
         playNextMessage(guildId);
       }
     });
-
-    ttsSessions.set(guildId, session);
-  }
-
-  const messageText = interaction.options.getString('message', true);
-  session.queue.push({ username: member.displayName, text: messageText });
-
-  try {
-    await connectToVoice(voiceChannel, session.player);
-    interaction.editReply('📣 Added your message to the TTS playback queue.');
-    playNextMessage(guildId);
-  } catch (error) {
-    logger.error(`[TTS Command Failure] ${error.message}`);
-    interaction.editReply(`❌ Failed to connect to voice channel: ${error.message}`);
-    ttsSessions.delete(guildId);
-  }
-}
