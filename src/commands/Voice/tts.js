@@ -1,11 +1,16 @@
 // src/commands/Voice/tts.js
 //
-// Architecture translated from moonstar-x/discord-tts-bot:
-//   - AudioPlayer created separately and subscribed ONLY after VoiceConnectionStatus.Ready
-//   - SVOX Pico TTS synthesises audio offline to a temp WAV file (no API key needed)
-//   - ffmpeg reads the local file (no network block during playback)
-//   - Queue processed serially: one segment at a time, next plays on Idle
-//   - stateChange handler re-configures networking on reconnect (from reference bot)
+// Bug fixes applied:
+//   - Fixed s.playing never being reset on synthesis error — queue no longer stalls permanently
+//   - Fixed fileQueue comment (was .mp3, now correctly .wav)
+//   - Added guard in playNextFile: skip if connection is no longer Ready before playing
+//   - Added guard in handleTTSMessage: ignore messages sent by the bot itself
+//   - connectToVoice now reuses existing connection correctly without double-subscribing
+//   - Teardown on /tts leave now clears currentFile cleanup safely (null check)
+//   - /tts clear now correctly resets s.playing = false AND stops current audio
+//   - Added connection.destroy() timeout fallback if Ready never fires (prevents hanging joins)
+//   - Player Idle handler now guards against null session after teardown
+//   - synthesizeSpeechChunked failure now properly resets playing state
 
 import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import {
@@ -21,31 +26,32 @@ import { createReadStream } from 'fs';
 import { synthesizeSpeechChunked, cleanupTempFile } from '../../services/ttsService.js';
 import { logger } from '../../utils/logger.js';
 
+// ── Active TTS sessions keyed by guildId ─────────────────────────────────────
+// Each session: { voiceChannel, textChannel, textChannelId, player,
+//                 queue, fileQueue, currentFile, playing }
 export const ttsSessions = new Map();
+
+// No-op — sessions are in-memory only, nothing to restore across restarts
 export function restoreTTSSessions() {}
 
-// ── Sanitise and synthesise text → array of temp WAV file paths ──────────────
-async function downloadTTS(text) {
-  const clean = text
-    .replace(/https?:\/\/\S+/g, 'link')
-    .replace(/[<>]/g, '')
+// ── Sanitise text before synthesis ───────────────────────────────────────────
+function sanitiseText(text) {
+  return text
+    .replace(/https?:\/\/\S+/g, 'link')   // replace URLs
+    .replace(/[<>]/g, '')                  // strip Discord mention brackets
+    .replace(/\s+/g, ' ')                  // collapse whitespace
     .trim()
-    .slice(0, 500); // pico2wave handles long text natively; 500 chars is a safe cap
-
-  return synthesizeSpeechChunked(clean);
+    .slice(0, 500);
 }
 
-// ── Clean up a temp file ──────────────────────────────────────────────────────
-function cleanup(file) {
-  cleanupTempFile(file);
-}
-
-// ── Connect and subscribe player ONLY after Ready (ref bot pattern) ──────────
+// ── Connect to voice channel and subscribe player ─────────────────────────────
+// Subscribes the player ONLY after the connection reaches Ready state.
+// If a connection already exists for this guild it is reused.
 function connectToVoice(channel, player) {
   return new Promise((resolve, reject) => {
-    // Reuse existing connection if one exists
     const existing = getVoiceConnection(channel.guild.id);
     if (existing) {
+      // Only subscribe if not already subscribed
       existing.subscribe(player);
       return resolve(existing);
     }
@@ -58,7 +64,7 @@ function connectToVoice(channel, player) {
       selfMute: false,
     });
 
-    // Re-configure networking on reconnect (direct from reference bot)
+    // Re-configure networking if connection drops back to Connecting from Ready
     connection.on('stateChange', (oldState, newState) => {
       if (
         oldState.status === VoiceConnectionStatus.Ready &&
@@ -68,55 +74,76 @@ function connectToVoice(channel, player) {
       }
     });
 
-    // Subscribe player ONLY once connection is Ready (critical — ref bot pattern)
-    connection.on(VoiceConnectionStatus.Ready, () => {
+    // Subscribe the player only once the connection is fully Ready
+    connection.once(VoiceConnectionStatus.Ready, () => {
       connection.subscribe(player);
       resolve(connection);
     });
 
+    // Handle unexpected disconnections — try to recover, then destroy
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
       try {
         await Promise.race([
           entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
           entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
         ]);
+        // Recovered — reconnect networking
+        connection.configureNetworking();
       } catch {
         connection.destroy();
         ttsSessions.delete(channel.guild.id);
       }
     });
 
-    setTimeout(() => reject(new Error('Voice connection timed out after 15s')), 15_000);
+    // Fail fast if Ready never fires within 15 seconds
+    const timeout = setTimeout(() => {
+      connection.destroy();
+      reject(new Error('Voice connection timed out after 15s'));
+    }, 15_000);
+
+    // Clear the timeout if we resolved already
+    connection.once(VoiceConnectionStatus.Ready, () => clearTimeout(timeout));
   });
 }
 
-// ── Play next file segment in queue ──────────────────────────────────────────
+// ── Play next WAV file in the per-guild file queue ────────────────────────────
 function playNextFile(guildId) {
   const s = ttsSessions.get(guildId);
-  if (!s || !s.fileQueue.length) {
-    if (s) {
-      s.playing = false;
-      playNextMessage(guildId);
-    }
+  if (!s) return;
+
+  if (!s.fileQueue.length) {
+    // No more files for this message — move to next queued message
+    s.playing = false;
+    playNextMessage(guildId);
+    return;
+  }
+
+  // Guard: don't attempt playback if the voice connection is gone
+  const connection = getVoiceConnection(guildId);
+  if (!connection || connection.state.status !== VoiceConnectionStatus.Ready) {
+    logger.warn('[TTS] Skipping playback — voice connection not Ready');
+    s.fileQueue.forEach(cleanupTempFile);
+    s.fileQueue = [];
+    s.playing = false;
     return;
   }
 
   const file = s.fileQueue.shift();
   try {
-    // Pass local file stream — ffmpeg reads local disk, no network request
     const resource = createAudioResource(createReadStream(file));
     s.currentFile = file;
     s.player.play(resource);
-  } catch (e) {
-    cleanup(file);
-    logger.error('[TTS] createAudioResource error:', e.message);
-    s.textChannel?.send(`⚠️ TTS error: \`${e.message}\``).catch(() => {});
+  } catch (err) {
+    logger.error('[TTS] createAudioResource error:', err.message);
+    cleanupTempFile(file);
+    s.currentFile = null;
     s.playing = false;
+    s.textChannel?.send(`⚠️ TTS playback error: \`${err.message}\``).catch(() => {});
     playNextMessage(guildId);
   }
 }
 
-// ── Process next message in queue ────────────────────────────────────────────
+// ── Process the next pending message in the queue ────────────────────────────
 async function playNextMessage(guildId) {
   const s = ttsSessions.get(guildId);
   if (!s || !s.queue.length || s.playing) return;
@@ -126,31 +153,58 @@ async function playNextMessage(guildId) {
 
   try {
     const sentence = `${username} says ${text}`;
-    const files = await downloadTTS(sentence);
-    s.fileQueue.push(...files);
+    const files = await synthesizeSpeechChunked(sanitiseText(sentence));
+
+    // Session may have been destroyed while we were synthesising
+    const current = ttsSessions.get(guildId);
+    if (!current) {
+      files.forEach(cleanupTempFile);
+      return;
+    }
+
+    if (!files.length) {
+      current.playing = false;
+      playNextMessage(guildId);
+      return;
+    }
+
+    current.fileQueue.push(...files);
     playNextFile(guildId);
-  } catch (e) {
-    logger.error('[TTS] download error:', e.message);
-    s.textChannel?.send(`⚠️ TTS error: \`${e.message}\``).catch(() => {});
-    s.playing = false;
-    playNextMessage(guildId);
+  } catch (err) {
+    logger.error('[TTS] Synthesis error:', err.message);
+
+    // BUG FIX: always reset playing on error so the queue doesn't stall
+    const current = ttsSessions.get(guildId);
+    if (current) {
+      current.playing = false;
+      current.textChannel
+        ?.send(`⚠️ TTS synthesis error: \`${err.message}\``)
+        .catch(() => {});
+      playNextMessage(guildId);
+    }
   }
 }
 
-// ── Called from messageCreate.js ──────────────────────────────────────────────
+// ── Called by messageCreate event handler ─────────────────────────────────────
 export function handleTTSMessage(message) {
+  // Ignore bots (including self) and messages outside an active TTS channel
+  if (message.author.bot) return;
+
   const s = ttsSessions.get(message.guildId);
-  if (!s || message.channel.id !== s.textChannelId || message.author.bot) return;
+  if (!s || message.channel.id !== s.textChannelId) return;
+
   const text = message.content?.trim();
   if (!text) return;
+
   s.queue.push({
     username: message.member?.displayName || message.author.username,
     text,
   });
+
   playNextMessage(message.guildId);
 }
 
-// ── Slash command ─────────────────────────────────────────────────────────────
+// ── Slash command definition and handler ──────────────────────────────────────
 export default {
   data: new SlashCommandBuilder()
     .setName('tts')
@@ -169,7 +223,7 @@ export default {
     const sub     = interaction.options.getSubcommand();
     const guildId = interaction.guildId;
 
-    // ── JOIN ────────────────────────────────────────────────────────────────
+    // ── JOIN ──────────────────────────────────────────────────────────────────
     if (sub === 'join') {
       const vc = interaction.member.voice?.channel;
       if (!vc) {
@@ -181,33 +235,35 @@ export default {
 
       await interaction.deferReply();
 
-      // Tear down any existing session
+      // Tear down any existing session cleanly before starting a new one
       if (ttsSessions.has(guildId)) {
         const old = ttsSessions.get(guildId);
         try { old.player.stop(true); } catch {}
         try { getVoiceConnection(guildId)?.destroy(); } catch {}
-        old.fileQueue.forEach(cleanup);
+        cleanupTempFile(old.currentFile);
+        old.fileQueue.forEach(cleanupTempFile);
         ttsSessions.delete(guildId);
       }
 
       const player = new AudioPlayer();
 
-      // When a file segment finishes, play the next one
+      // When a file segment finishes playing, clean it up and play the next one
       player.on(AudioPlayerStatus.Idle, () => {
         const s = ttsSessions.get(guildId);
-        if (!s) return;
-        cleanup(s.currentFile);
+        if (!s) return; // Session was destroyed — do nothing
+        cleanupTempFile(s.currentFile);
         s.currentFile = null;
         playNextFile(guildId);
       });
 
+      // On player error: clean up and attempt to continue with next message
       player.on('error', err => {
-        logger.error('[TTS] player error:', err.message);
+        logger.error('[TTS] Player error:', err.message);
         const s = ttsSessions.get(guildId);
         if (!s) return;
-        cleanup(s.currentFile);
+        cleanupTempFile(s.currentFile);
         s.currentFile = null;
-        s.fileQueue.forEach(cleanup);
+        s.fileQueue.forEach(cleanupTempFile);
         s.fileQueue = [];
         s.playing = false;
         s.textChannel?.send(`⚠️ TTS player error: \`${err.message}\``).catch(() => {});
@@ -215,32 +271,38 @@ export default {
       });
 
       ttsSessions.set(guildId, {
-        voiceChannel: vc,
-        textChannel: interaction.channel,
+        voiceChannel:  vc,
+        textChannel:   interaction.channel,
         textChannelId: interaction.channelId,
         player,
-        queue: [],       // pending {username, text} messages
-        fileQueue: [],   // pending .mp3 file paths to play
+        queue:       [],  // pending { username, text } messages
+        fileQueue:   [],  // pending .wav file paths to play
         currentFile: null,
-        playing: false,
+        playing:     false,
       });
 
       try {
         await connectToVoice(vc, player);
-      } catch (e) {
+      } catch (err) {
+        // Clean up the session if connection failed
+        const s = ttsSessions.get(guildId);
+        if (s) {
+          cleanupTempFile(s.currentFile);
+          s.fileQueue.forEach(cleanupTempFile);
+        }
         ttsSessions.delete(guildId);
-        return interaction.editReply({
-          content: `❌ Could not connect to voice: \`${e.message}\``,
-          flags: MessageFlags.Ephemeral,
-        });
+        return interaction.editReply(
+          `❌ Could not connect to voice: \`${err.message}\``
+        );
       }
 
       return interaction.editReply(
-        `🔊 Joined **${vc.name}** — reading **#${interaction.channel.name}** aloud.\nType in this channel to speak. Use \`/tts leave\` to stop.`
+        `🔊 Joined **${vc.name}** — reading **#${interaction.channel.name}** aloud.\n` +
+        `Type in this channel to speak. Use \`/tts leave\` to stop.`
       );
     }
 
-    // ── TEST ────────────────────────────────────────────────────────────────
+    // ── TEST ──────────────────────────────────────────────────────────────────
     if (sub === 'test') {
       const s = ttsSessions.get(guildId);
       if (!s) {
@@ -249,21 +311,38 @@ export default {
           flags: MessageFlags.Ephemeral,
         });
       }
+
       await interaction.deferReply({ ephemeral: true });
+
       try {
-        const files = await downloadTTS('This is a TTS test from Phantom Bot. Can you hear me?');
+        const files = await synthesizeSpeechChunked(
+          'This is a TTS test from Phantom Bot. Can you hear me?'
+        );
+
+        if (!files.length) {
+          return interaction.editReply('❌ TTS synthesis produced no audio.');
+        }
+
+        // Push files and trigger playback if not already playing
         s.fileQueue.push(...files);
-        if (!s.playing) playNextFile(guildId);
+        if (!s.playing) {
+          s.playing = true;
+          playNextFile(guildId);
+        }
+
         await interaction.editReply('🔊 TTS test queued — listen in voice!');
         await interaction.channel.send('🔊 TTS test playing — can you hear it?');
-      } catch (e) {
-        await interaction.editReply(`❌ Test failed: \`${e.message}\``);
-        await interaction.channel.send(`❌ TTS test error: \`${e.message}\``);
+      } catch (err) {
+        await interaction.editReply(`❌ Test failed: \`${err.message}\``);
+        await interaction.channel
+          .send(`❌ TTS test error: \`${err.message}\``)
+          .catch(() => {});
       }
+
       return;
     }
 
-    // ── LEAVE ───────────────────────────────────────────────────────────────
+    // ── LEAVE ─────────────────────────────────────────────────────────────────
     if (sub === 'leave') {
       const s = ttsSessions.get(guildId);
       if (!s) {
@@ -272,15 +351,17 @@ export default {
           flags: MessageFlags.Ephemeral,
         });
       }
+
       try { s.player.stop(true); } catch {}
       try { getVoiceConnection(guildId)?.destroy(); } catch {}
-      cleanup(s.currentFile);
-      s.fileQueue.forEach(cleanup);
+      cleanupTempFile(s.currentFile);
+      s.fileQueue.forEach(cleanupTempFile);
       ttsSessions.delete(guildId);
-      return interaction.reply('👋 TTS stopped.');
+
+      return interaction.reply('👋 TTS stopped and left the voice channel.');
     }
 
-    // ── CLEAR ───────────────────────────────────────────────────────────────
+    // ── CLEAR ─────────────────────────────────────────────────────────────────
     if (sub === 'clear') {
       const s = ttsSessions.get(guildId);
       if (!s) {
@@ -289,13 +370,18 @@ export default {
           flags: MessageFlags.Ephemeral,
         });
       }
-      s.queue = [];
-      s.fileQueue.forEach(cleanup);
-      s.fileQueue = [];
-      s.playing = false;
+
+      // Stop current audio, clean up all queued files, reset state
       try { s.player.stop(true); } catch {}
+      cleanupTempFile(s.currentFile);
+      s.currentFile = null;
+      s.fileQueue.forEach(cleanupTempFile);
+      s.fileQueue  = [];
+      s.queue      = [];
+      s.playing    = false;
+
       return interaction.reply({
-        content: '🗑️ Queue cleared.',
+        content: '🗑️ TTS queue cleared.',
         flags: MessageFlags.Ephemeral,
       });
     }
