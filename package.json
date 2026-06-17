@@ -15,6 +15,7 @@
     "backup:drill": "node scripts/restore-drill.js"
   },
   "dependencies": {
+    "@andresaya/edge-tts": "^1.8.0",
     "@discord-player/extractor": "^7.2.0",
     "@discordjs/rest": "^2.6.1",
     "@discordjs/voice": "^0.19.2",
