@@ -12,6 +12,7 @@ const GUILD_CONFIG_DEFAULTS = {
     welcomeMessage: 'Welcome {user} to {server}!',
     autoRole: null,
     dmOnClose: true,
+    ttsVoice: null,
     logIgnore: { users: [], channels: [] },
     logging: {
         enabled: false,
@@ -109,5 +110,3 @@ export const setConfigValue = wrapServiceBoundary(async function setConfigValue(
     message: 'Failed to update guild configuration value',
     userMessage: 'Failed to update a server setting. Please try again.'
 });
-
-
