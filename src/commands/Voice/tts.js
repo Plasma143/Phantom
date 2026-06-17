@@ -32,7 +32,7 @@ import { synthesizeSpeechEdgeChunked } from '../../services/edgeTtsService.js';
 import { logger } from '../../utils/logger.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { getVoiceChoicesForTier, isVoiceAllowedForTier, resolveVoiceForGuild, DEFAULT_VOICE } from '../../utils/voiceCatalog.js';
-import { getSubscription, getTier } from '../../web/stripePayments.js';
+import { getSubscription, getTier, isOwner } from '../../web/stripePayments.js';
 import { getGuildConfig, setGuildConfig } from '../../services/guildConfig.js';
 
 // ── Active TTS sessions keyed by guildId ─────────────────────────────────────
@@ -345,7 +345,7 @@ export default {
       // this guild has no saved choice, or a tier downgrade left an
       // invalid one sitting in the config.
       const subscription = await getSubscription(guildId);
-      const tier = getTier(subscription);
+      const tier = isOwner(interaction.user.id) ? 'enterprise' : getTier(subscription);
       const voiceId = resolveVoiceForGuild({ tier, savedVoiceId: guildConfig?.ttsVoice });
 
       // When a file segment finishes playing, clean it up and play the next one
@@ -497,7 +497,7 @@ export default {
     // ── VOICE ─────────────────────────────────────────────────────────────────
     if (sub === 'voice') {
       const subscription = await getSubscription(guildId);
-      const tier = getTier(subscription);
+      const tier = isOwner(interaction.user.id) ? 'enterprise' : getTier(subscription);
       const choices = getVoiceChoicesForTier(tier);
 
       if (choices.length === 0) {
@@ -529,7 +529,7 @@ export async function handleVoiceSelectMenu(interaction, client) {
   const chosenVoice = interaction.values[0];
 
   const subscription = await getSubscription(guildId);
-  const tier = getTier(subscription);
+  const tier = isOwner(interaction.user.id) ? 'enterprise' : getTier(subscription);
 
   if (!isVoiceAllowedForTier(chosenVoice, tier)) {
     return interaction.update({
