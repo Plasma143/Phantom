@@ -15,7 +15,7 @@
 //     on Railway. Now pipes espeak-ng's WAV output through ffmpeg to OGG Opus and passes
 //     StreamType.OggOpus explicitly, bypassing the probe step entirely.
 
-import { SlashCommandBuilder, MessageFlags } from 'discord.js';
+import { SlashCommandBuilder, MessageFlags, StringSelectMenuBuilder, ActionRowBuilder } from 'discord.js';
 import {
   joinVoiceChannel,
   getVoiceConnection,
@@ -27,9 +27,13 @@ import {
   StreamType,
 } from '@discordjs/voice';
 import { spawn } from 'child_process';
-import { synthesizeSpeechChunked, cleanupTempFile } from '../../services/ttsService.js';
+import { cleanupTempFile } from '../../services/ttsService.js';
+import { synthesizeSpeechEdgeChunked } from '../../services/edgeTtsService.js';
 import { logger } from '../../utils/logger.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
+import { getVoiceChoicesForTier, isVoiceAllowedForTier, resolveVoiceForGuild, DEFAULT_VOICE } from '../../utils/voiceCatalog.js';
+import { getSubscription, getTier } from '../../web/stripePayments.js';
+import { getGuildConfig, setGuildConfig } from '../../services/guildConfig.js';
 
 // ── Active TTS sessions keyed by guildId ─────────────────────────────────────
 // Each session: { voiceChannel, textChannel, textChannelId, player,
@@ -238,7 +242,7 @@ async function playNextMessage(guildId) {
 
   try {
     const sentence = `${username} says ${text}`;
-    const files = await synthesizeSpeechChunked(sanitiseText(sentence));
+    const files = await synthesizeSpeechEdgeChunked(sanitiseText(sentence), s.voiceId);
 
     // Session may have been destroyed while we were synthesising
     const current = ttsSessions.get(guildId);
@@ -300,11 +304,12 @@ export default {
     )
     .addSubcommand(s => s.setName('leave').setDescription('Stop TTS and leave VC'))
     .addSubcommand(s => s.setName('clear').setDescription('Clear the TTS queue'))
-    .addSubcommand(s => s.setName('test').setDescription('Test TTS audio')),
+    .addSubcommand(s => s.setName('test').setDescription('Test TTS audio'))
+    .addSubcommand(s => s.setName('voice').setDescription('Choose the TTS voice for this server')),
 
   category: 'commands',
 
-  async execute(interaction) {
+  async execute(interaction, guildConfig) {
     const sub     = interaction.options.getSubcommand();
     const guildId = interaction.guildId;
 
@@ -336,6 +341,13 @@ export default {
 
       const player = new AudioPlayer();
 
+      // Resolve once per join — falls back safely to the default voice if
+      // this guild has no saved choice, or a tier downgrade left an
+      // invalid one sitting in the config.
+      const subscription = await getSubscription(guildId);
+      const tier = getTier(subscription);
+      const voiceId = resolveVoiceForGuild({ tier, savedVoiceId: guildConfig?.ttsVoice });
+
       // When a file segment finishes playing, clean it up and play the next one
       player.on(AudioPlayerStatus.Idle, () => {
         const s = ttsSessions.get(guildId);
@@ -364,8 +376,9 @@ export default {
         textChannel:   interaction.channel,
         textChannelId: interaction.channelId,
         player,
+        voiceId,
         queue:       [],  // pending { username, text } messages
-        fileQueue:   [],  // pending .wav file paths to play
+        fileQueue:   [],  // pending audio file paths to play
         currentFile: null,
         playing:     false,
       });
@@ -386,8 +399,9 @@ export default {
       }
 
       return interaction.editReply(
-        `🔊 Joined **${vc.name}** — reading **#${interaction.channel.name}** aloud.\n` +
-        `Type in this channel to speak. Use \`/tts leave\` to stop.`
+        `🔊 Joined **${vc.name}** — reading **#${interaction.channel.name}** aloud using **${voiceId}**.\n` +
+        `Type in this channel to speak. Use \`/tts leave\` to stop.` +
+        (tier !== 'free' ? ' Use `/tts voice` to pick a different one.' : '')
       );
     }
 
@@ -408,8 +422,9 @@ export default {
       }
 
       try {
-        const files = await synthesizeSpeechChunked(
-          'This is a TTS test from Phantom Bot. Can you hear me?'
+        const files = await synthesizeSpeechEdgeChunked(
+          'This is a TTS test from Phantom Bot. Can you hear me?',
+          s.voiceId
         );
 
         if (!files.length) {
@@ -478,5 +493,61 @@ export default {
         flags: MessageFlags.Ephemeral,
       });
     }
+
+    // ── VOICE ─────────────────────────────────────────────────────────────────
+    if (sub === 'voice') {
+      const subscription = await getSubscription(guildId);
+      const tier = getTier(subscription);
+      const choices = getVoiceChoicesForTier(tier);
+
+      if (choices.length === 0) {
+        return interaction.reply({
+          content: `Voice selection is a Premium feature. This server currently uses the default voice (**${DEFAULT_VOICE}**). Upgrade to unlock more options.`,
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId('tts_voice_select')
+        .setPlaceholder('Choose a voice')
+        .addOptions(choices.map(v => ({ label: v.label, value: v.id })));
+
+      const row = new ActionRowBuilder().addComponents(menu);
+
+      return interaction.reply({
+        content: `Pick a voice (${choices.length} available on your **${tier}** plan):`,
+        components: [row],
+        flags: MessageFlags.Ephemeral,
+      });
+    }
   },
 };
+
+// ── Select-menu handler for /tts voice — called from interactionCreate.js ────
+export async function handleVoiceSelectMenu(interaction, client) {
+  const guildId = interaction.guild.id;
+  const chosenVoice = interaction.values[0];
+
+  const subscription = await getSubscription(guildId);
+  const tier = getTier(subscription);
+
+  if (!isVoiceAllowedForTier(chosenVoice, tier)) {
+    return interaction.update({
+      content: 'That voice is no longer available on your current plan.',
+      components: [],
+    });
+  }
+
+  const currentConfig = await getGuildConfig(client, guildId);
+  await setGuildConfig(client, guildId, { ...currentConfig, ttsVoice: chosenVoice });
+
+  // If a session is already active in this guild, switch it over immediately
+  // rather than waiting for the next /tts leave + join.
+  const activeSession = ttsSessions.get(guildId);
+  if (activeSession) activeSession.voiceId = chosenVoice;
+
+  await interaction.update({
+    content: `TTS voice set to **${chosenVoice}**.`,
+    components: [],
+  });
+}
