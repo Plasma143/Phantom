@@ -325,6 +325,13 @@ export default {
             return;
           }
 
+          // TTS voice selection
+          if (interaction.customId === 'tts_voice_select') {
+            const { handleVoiceSelectMenu } = await import('../commands/Voice/tts.js');
+            await handleVoiceSelectMenu(interaction, client).catch(err => logger.error('[TTS] voice select error:', err.message));
+            return;
+          }
+
           const [customId, ...args] = interaction.customId.split(':');
           const selectMenu = client.selectMenus.get(customId);
 
