@@ -162,7 +162,7 @@ class PhantomBot extends Client {
       
       this.setupCronJobs();
     } catch (error) {
-      logger.error('Failed to start bot:', error);
+      logger.error(`Failed to start bot: ${error.message || error}`);
       process.exit(1);
     }
   }
@@ -764,7 +764,7 @@ class PhantomBot extends Client {
         }
       }
     } catch (err) {
-      logger.error('[Trial] expireTrials error:', err.message);
+      logger.error(`[Trial] expireTrials error: ${err.message || err}`);
     }
   }
 
@@ -842,7 +842,7 @@ class PhantomBot extends Client {
       }
 
     } catch (err) {
-      logger.error('[AutoClose] autoCloseStaleTickets error:', err.message);
+      logger.error(`[AutoClose] autoCloseStaleTickets error: ${err.message || err}`);
     }
   }
 
@@ -902,11 +902,11 @@ class PhantomBot extends Client {
           }
           logger.info(`[rankSync] Guild ${guildId}: ${synced} synced, ${failed} failed`);
         } catch (e) {
-          logger.error(`[rankSync] Guild ${guildId} error:`, e.message);
+          logger.error(`[rankSync] Guild ${guildId} error: ${e.message || e}`);
         }
       }
     } catch (e) {
-      logger.error('[rankSync] Fatal error:', e.message);
+      logger.error(`[rankSync] Fatal error: ${e.message || e}`);
     }
   }
 
@@ -941,7 +941,7 @@ class PhantomBot extends Client {
           logger.info(`Cleaned up ${orphanedCounters.length} orphaned counter(s) from guild ${guildId} during scheduled update`);
         }
       } catch (error) {
-        logger.error(`Error updating counters for guild ${guildId}:`, error);
+        logger.error(`Error updating counters for guild ${guildId}: ${error.message || error}`);
       }
     }
   }
@@ -967,10 +967,10 @@ class PhantomBot extends Client {
         }
       } catch (error) {
         if (handler.required) {
-          logger.error(`❌ Failed to load required handler ${handler.path}:`, error.message);
+          logger.error(`❌ Failed to load required handler ${handler.path}: ${error.message || error}`);
           throw error;
         } else if (error.code !== 'MODULE_NOT_FOUND') {
-          logger.warn(`⚠️  Failed to load optional handler ${handler.path}:`, error.message);
+          logger.warn(`⚠️  Failed to load optional handler ${handler.path}: ${error.message || error}`);
         }
       }
     }
@@ -983,7 +983,7 @@ class PhantomBot extends Client {
       // is skipped to prevent duplicate commands appearing in servers.
       logger.info('Command registration deferred to ready event (global only).');
     } catch (error) {
-      logger.error('Error in registerCommands:', error);
+      logger.error(`Error in registerCommands: ${error.message || error}`);
     }
   }
 
@@ -1008,7 +1008,7 @@ class PhantomBot extends Client {
             logger.info('✅ Database connection closed');
           }
         } catch (error) {
-          logger.warn('Error closing database pool:', error.message);
+          logger.warn(`Error closing database pool: ${error.message || error}`);
         }
       }
 
@@ -1021,7 +1021,7 @@ class PhantomBot extends Client {
         } catch (error) {
           
           
-          logger.warn('Discord client destroy warning (non-critical):', error.message);
+          logger.warn(`Discord client destroy warning (non-critical): ${error.message || error}`);
         }
       }
 
@@ -1029,7 +1029,7 @@ class PhantomBot extends Client {
   shutdownLog('Bot stopped successfully.');
       process.exit(0);
     } catch (error) {
-      logger.error('Error during graceful shutdown:', error);
+      logger.error(`Error during graceful shutdown: ${error.message || error}`);
       process.exit(1);
     }
   }
@@ -1043,12 +1043,12 @@ try {
     process.on('SIGINT', () => bot.shutdown('SIGINT'));
     
     process.on('uncaughtException', (error) => {
-      logger.error('Uncaught Exception:', error);
+      logger.error(`Uncaught Exception: ${error?.message || error}`);
       bot.shutdown('UNCAUGHT_EXCEPTION');
     });
     
     process.on('unhandledRejection', (reason, promise) => {
-      logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+      logger.error(`Unhandled Rejection: ${reason?.message || reason}`);
       bot.shutdown('UNHANDLED_REJECTION');
     });
   };
@@ -1056,7 +1056,7 @@ try {
   setupShutdown();
   bot.start();
 } catch (error) {
-  logger.error('Fatal error during bot startup:', error);
+  logger.error(`Fatal error during bot startup: ${error.message || error}`);
   process.exit(1);
 }
 
