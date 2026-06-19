@@ -20,6 +20,7 @@ import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { logger } from '../utils/logger.js';
 import { getConfigValue, updateGuildConfig } from '../services/guildConfig.js';
+import { getAllReactionRoleMessages } from '../services/reactionRoleService.js';
 import { db } from '../utils/database.js';
 import { pgDb } from '../utils/postgresDatabase.js';
 import { getRobloxGroupInfo, getRobloxUserByUsername, getGroupRoles, getGroupMembership, updateGroupMemberRank, getGroupJoinRequests, acceptGroupJoinRequest, declineGroupJoinRequest } from '../utils/roblox.js';
@@ -517,7 +518,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
     const { guild, user } = access;
 
-    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification, autoRank, enterprise, securityRaw, subscription, boostDiscount, scheduledAnns, inGameMonitor, joinNotify, groupFunds, applications] = await Promise.all([
+    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification, autoRank, enterprise, securityRaw, subscription, boostDiscount, scheduledAnns, inGameMonitor, joinNotify, groupFunds, applications, rolePanels] = await Promise.all([
       fetch(`https://discord.com/api/guilds/${guildId}/roles`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       fetch(`https://discord.com/api/guilds/${guildId}/channels`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       fetch(`https://discord.com/api/guilds/${guildId}/members?limit=1000`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
@@ -534,6 +535,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
       getConfigValue({ db }, guildId, 'joinNotify', {}),
       getConfigValue({ db }, guildId, 'groupFunds', {}),
       getConfigValue({ db }, guildId, 'applications', {}),
+      getAllReactionRoleMessages({ db }, guildId).catch(() => []),
     ]);
 
     const allRoles = rolesRes.ok ? await rolesRes.json() : [];
@@ -633,8 +635,8 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
       </div>` : '';
 
     let banner = '';
-    if (req.query.success) banner = `<div style="background:#1a3a2a; color:#57f287; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #2d5a3d; font-size:14px;">&#x2705; ${req.query.success}</div>`;
-    else if (req.query.error) banner = `<div style="background:#3a1a1a; color:#ed4245; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #5a2d2d; font-size:14px;">&#x274C; ${req.query.error}</div>`;
+    if (req.query.success) banner = `<div id="flashBanner" style="background:#1a3a2a; color:#57f287; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #2d5a3d; font-size:14px; transition:opacity 0.5s;">&#x2705; ${req.query.success}</div><script>setTimeout(function(){var b=document.getElementById('flashBanner');if(b){b.style.opacity='0';setTimeout(function(){b.remove();},500);}},4000);</script>`;
+    else if (req.query.error) banner = `<div id="flashBanner" style="background:#3a1a1a; color:#ed4245; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #5a2d2d; font-size:14px; transition:opacity 0.5s;">&#x274C; ${req.query.error}</div><script>setTimeout(function(){var b=document.getElementById('flashBanner');if(b){b.style.opacity='0';setTimeout(function(){b.remove();},500);}},4000);</script>`;
 
     const TAB = 'padding:7px 12px; border:none; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.15s; white-space:nowrap; width:100%; text-align:center;';
     const ACTIVE = TAB + ' background:#5865F2; color:#fff;';
@@ -652,6 +654,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
       <p style="color:#949ba4; font-size:14px; margin:0 0 24px;">Server Settings</p>
       ${upgradeBanner}
       ${banner}
+      ${banner ? `<script>setTimeout(function(){var b=document.getElementById('flashBanner');if(b){b.style.opacity='0';setTimeout(function(){b.style.display='none';},500);}},4000);</script>` : ''}
 
       <div style="max-width:700px; margin:0 auto; text-align:left;">
 
@@ -1746,29 +1749,26 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
         <div id="tab-role-panels" style="display:none; ${PANEL}">
           <p style="font-weight:700; font-size:18px; margin:0 0 4px;">🎭 Role Panels</p>
           <p style="color:#949ba4; font-size:13px; margin:0 0 20px;">Button/dropdown panels that let members self-assign roles. Use <code style="background:#111214;padding:2px 5px;border-radius:4px;">/reactroles setup</code> in Discord to create a new panel. Free: up to 5 panels.</p>
-          <div id="rpanelsContainer" style="margin-bottom:20px;"><p style="color:#5e6272;font-size:13px;">Loading panels…</p></div>
+          <div style="margin-bottom:20px;">
+            ${Array.isArray(rolePanels) && rolePanels.length > 0
+              ? rolePanels.map(p => {
+                  const ch = textChannels.find(c => c.id === p.channelId);
+                  const chName = ch ? ch.name : p.channelId;
+                  const rc = Array.isArray(p.roles) ? p.roles.length : 0;
+                  return '<div style="background:#111214;border:1px solid #2b2d31;border-radius:10px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+                    + '<div><p style="font-weight:700;font-size:14px;color:#fff;margin:0 0 3px;">Panel in #' + chName + '</p>'
+                    + '<p style="color:#949ba4;font-size:12px;margin:0;">' + rc + ' role' + (rc !== 1 ? 's' : '') + '</p></div>'
+                    + '<div style="display:flex;gap:8px;">'
+                    + '<a href="https://discord.com/channels/${guildId}/' + p.channelId + '/' + p.messageId + '" target="_blank" style="padding:6px 12px;background:#2b2d31;color:#fff;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;">View ↗</a>'
+                    + '<button onclick="deleteRolePanel(\'' + p.messageId + '\')" style="padding:6px 12px;background:#ed424520;color:#ed4245;border:1px solid #ed424540;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">Delete</button>'
+                    + '</div></div>';
+                }).join('')
+              : '<p style="color:#5e6272;font-size:13px;">No role panels yet.</p>'}
+          </div>
           <div style="background:#111214; border:1px dashed #2b2d31; border-radius:10px; padding:16px; text-align:center;">
             <p style="color:#949ba4; font-size:13px; margin:0;">To create a new panel, use <code style="background:#1e1f22;padding:2px 6px;border-radius:4px;">/reactroles setup</code> in your Discord server.</p>
           </div>
           <script>
-            (async function loadRolePanels(){
-              const c=document.getElementById('rpanelsContainer');
-              try{
-                const r=await fetch('/dashboard/server/${guildId}/role-panels');
-                const d=await r.json();
-                if(!d.panels||d.panels.length===0){c.innerHTML='<p style="color:#5e6272;font-size:13px;">No role panels yet.</p>';return;}
-                function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-                c.innerHTML=d.panels.map(function(p){
-                  return '<div style="background:#111214;border:1px solid #2b2d31;border-radius:10px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
-                    +'<div><p style="font-weight:700;font-size:14px;color:#fff;margin:0 0 3px;">'+esc(p.title)+'</p>'
-                    +'<p style="color:#949ba4;font-size:12px;margin:0;">#'+esc(p.channelName)+' \xb7 '+p.roleCount+' role'+(p.roleCount!==1?'s':'')+'</p></div>'
-                    +'<div style="display:flex;gap:8px;">'
-                    +(p.messageUrl?'<a href="'+p.messageUrl+'" target="_blank" style="padding:6px 12px;background:#2b2d31;color:#fff;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;">View ↗</a>':'')
-                    +'<button onclick="deleteRolePanel(\''+p.messageId+'\')" style="padding:6px 12px;background:#ed424520;color:#ed4245;border:1px solid #ed424540;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">Delete</button>'
-                    +'</div></div>';
-                }).join('');
-              }catch(e){c.innerHTML='<p style="color:#ed4245;font-size:13px;">Failed to load panels.</p>';}
-            })();
             async function deleteRolePanel(mid){
               if(!confirm('Delete this role panel? This cannot be undone.'))return;
               const r=await fetch('/dashboard/server/${guildId}/role-panels/'+mid,{method:'DELETE'});
