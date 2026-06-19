@@ -1,16 +1,15 @@
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/database.js';
-import { getConfigValue } from '../utils/helpers.js';
+import { getConfigValue } from '../services/guildConfig.js';
 import { EmbedBuilder } from 'discord.js';
 
-const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
-const timers = new Map(); // guildId -> timer
+const timers = new Map();
+const lastCount = new Map();
+const lastMessageId = new Map();
 
 export function startInGameMonitor(client) {
   logger.info('[INGAME] In-game monitor service started');
-  // Initial scan
   setTimeout(() => scanAll(client), 5000);
-  // Re-read configs every 10 minutes and update timers
   setInterval(() => scanAll(client), 10 * 60 * 1000);
 }
 
@@ -19,31 +18,27 @@ async function scanAll(client) {
   try { keys = await db.list('guild:'); } catch { return; }
 
   for (const key of keys) {
-    const guildId = key.replace('guild:', '');
+    const guildId = key.replace('guild:', '').replace(':config', '');
+    if (!guildId || guildId.includes(':')) continue;
     try {
-      const cfg = await getConfigValue({ db }, guildId, 'inGameMonitor', {});
+      const cfg = await getConfigValue(client, guildId, 'inGameMonitor', {});
       if (!cfg.enabled || !cfg.universeId || !cfg.channelId) {
         if (timers.has(guildId)) { clearInterval(timers.get(guildId)); timers.delete(guildId); }
         continue;
       }
-      const intervalMs = (cfg.intervalMins || 5) * 60 * 1000;
       if (!timers.has(guildId)) {
+        const intervalMs = (cfg.intervalMins || 5) * 60 * 1000;
         const timer = setInterval(() => poll(client, guildId), intervalMs);
         timers.set(guildId, timer);
-        await poll(client, guildId); // immediate first poll
+        await poll(client, guildId);
       }
-    } catch (err) {
-      logger.error(`[INGAME] Error scanning guild ${guildId}:`, err);
-    }
+    } catch (err) { logger.error(`[INGAME] Error scanning guild ${guildId}:`, err); }
   }
 }
 
-const lastCount = new Map(); // guildId -> last player count
-const lastMessageId = new Map(); // guildId -> last status message id
-
 async function poll(client, guildId) {
   try {
-    const cfg = await getConfigValue({ db }, guildId, 'inGameMonitor', {});
+    const cfg = await getConfigValue(client, guildId, 'inGameMonitor', {});
     if (!cfg.enabled || !cfg.universeId || !cfg.channelId) return;
 
     const res = await fetch(`https://games.roblox.com/v1/games?universeIds=${cfg.universeId}`);
@@ -56,8 +51,7 @@ async function poll(client, guildId) {
     const visitCount = game.visits ?? 0;
     const gameName = game.name ?? 'Unknown';
 
-    const prev = lastCount.get(guildId);
-    if (prev === playerCount) return; // no change
+    if (lastCount.get(guildId) === playerCount) return;
     lastCount.set(guildId, playerCount);
 
     const channel = await client.channels.fetch(cfg.channelId).catch(() => null);
@@ -73,19 +67,11 @@ async function poll(client, guildId) {
       .setFooter({ text: `Universe ID: ${cfg.universeId}` })
       .setTimestamp();
 
-    // Try to edit the last status message instead of spamming
     const lastId = lastMessageId.get(guildId);
     if (lastId) {
-      try {
-        const msg = await channel.messages.fetch(lastId);
-        await msg.edit({ embeds: [embed] });
-        return;
-      } catch {}
+      try { const msg = await channel.messages.fetch(lastId); await msg.edit({ embeds: [embed] }); return; } catch {}
     }
-
     const sent = await channel.send({ embeds: [embed] });
     lastMessageId.set(guildId, sent.id);
-  } catch (err) {
-    logger.error(`[INGAME] Poll failed for guild ${guildId}:`, err);
-  }
+  } catch (err) { logger.error(`[INGAME] Poll failed for guild ${guildId}:`, err); }
 }
