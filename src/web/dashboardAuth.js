@@ -93,7 +93,7 @@ dashboardAuthRouter.get('/favicon.ico', (req, res) => {
 dashboardAuthRouter.get('/phantom-icon.png', (req, res) => {
   res.set('Content-Type', 'image/png');
   res.set('Cache-Control', 'public, max-age=86400');
-  res.send(ICON_192);
+  res.send(FAVICON_PNG);  // original ghost icon
 });
 dashboardAuthRouter.get('/phantom-icon-192.png', (req, res) => {
   res.set('Content-Type', 'image/png');
