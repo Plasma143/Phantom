@@ -2,6 +2,10 @@ import { Events, REST, Routes } from "discord.js";
 import { logger, startupLog } from "../utils/logger.js";
 import config from "../config/application.js";
 import { reconcileReactionRoleMessages } from "../services/reactionRoleService.js";
+import { startScheduledAnnouncements } from "../services/scheduledAnnouncements.js";
+import { startInGameMonitor } from "../services/inGameMonitor.js";
+import { startJoinNotify } from "../services/joinNotify.js";
+import { startGroupFundsMonitor } from "../services/groupFundsMonitor.js";
 
 export default {
   name: Events.ClientReady,
@@ -47,6 +51,11 @@ export default {
       startupLog(
         `Reaction role reconciliation: scanned ${reconciliationSummary.scannedMessages}, removed ${reconciliationSummary.removedMessages}, errors ${reconciliationSummary.errors}`
       );
+
+      startScheduledAnnouncements(client);
+      startInGameMonitor(client);
+      startJoinNotify(client);
+      startGroupFundsMonitor(client);
     } catch (error) {
       logger.error("Error in ready event:", error);
     }
