@@ -636,7 +636,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
     if (req.query.success) banner = `<div style="background:#1a3a2a; color:#57f287; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #2d5a3d; font-size:14px;">&#x2705; ${req.query.success}</div>`;
     else if (req.query.error) banner = `<div style="background:#3a1a1a; color:#ed4245; padding:12px 16px; border-radius:8px; margin-bottom:20px; border:1px solid #5a2d2d; font-size:14px;">&#x274C; ${req.query.error}</div>`;
 
-    const TAB = 'padding:7px 12px; border:none; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.15s; white-space:nowrap; flex-shrink:0; flex-grow:1; flex-basis:calc(20% - 3px);';
+    const TAB = 'padding:7px 12px; border:none; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.15s; white-space:nowrap; width:100%; text-align:center;';
     const ACTIVE = TAB + ' background:#5865F2; color:#fff;';
     const INACTIVE = TAB + ' background:transparent; color:#949ba4;';
     const PANEL = 'background:#1e2124; border-radius:12px; padding:24px; min-height:420px;';
@@ -655,7 +655,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
       <div style="max-width:700px; margin:0 auto; text-align:left;">
 
-        <div style="display:flex; gap:3px; background:#111214; padding:4px; border-radius:10px; margin-bottom:16px; flex-wrap:wrap;">
+        <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:3px; background:#111214; padding:4px; border-radius:10px; margin-bottom:16px;">
           <button id="btn-overview" style="${ACTIVE}" onclick="showTab('overview',this)">&#128202; Overview</button>
           <button id="btn-group-setup" style="${INACTIVE}" onclick="showTab('group-setup',this)">&#9881;&#65039; Group Setup</button>
           <button id="btn-rank-management" style="${INACTIVE}" onclick="showTab('rank-management',this)">&#128081; Rank Management${!isPremium ? ' 🔒' : ''}</button>
@@ -2895,30 +2895,41 @@ dashboardAuthRouter.get('/dashboard/server/:guildId/role-panels', async (req, re
   const access = await requireGuildAccess(req, res, guildId);
   if (!access) return;
   try {
-    const keys = await db.list(`reaction_roles:${guildId}:`);
+    const prefix = `reaction_roles:${guildId}:`;
+    let keys = await db.list(prefix);
+    if (keys && typeof keys === 'object' && !Array.isArray(keys)) keys = keys.value || [];
     if (!Array.isArray(keys) || keys.length === 0) return res.json({ panels: [] });
+
     const BOT_TOKEN = process.env.DISCORD_TOKEN;
     const panels = [];
+
+    // Fetch channel list once
+    const chRes = await fetch(`https://discord.com/api/guilds/${guildId}/channels`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } });
+    const channelList = chRes.ok ? await chRes.json() : [];
+    const channelMap = {};
+    if (Array.isArray(channelList)) channelList.forEach(c => { channelMap[c.id] = c.name; });
+
     for (const key of keys) {
-      const data = await db.get(key);
+      let raw = await db.get(key);
+      if (!raw) continue;
+      // Unwrap value if needed
+      const data = (raw.ok && raw.value) ? raw.value : (raw.value || raw);
       if (!data || !data.messageId || !data.channelId) continue;
-      let channelName = data.channelId;
-      let title = 'Untitled Panel';
-      let messageUrl = null;
-      try {
-        const chRes = await fetch(`https://discord.com/api/channels/${data.channelId}`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } });
-        if (chRes.ok) { const ch = await chRes.json(); channelName = ch.name || data.channelId; }
-        const msgRes = await fetch(`https://discord.com/api/channels/${data.channelId}/messages/${data.messageId}`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } });
-        if (msgRes.ok) {
-          const msg = await msgRes.json();
-          if (msg.embeds && msg.embeds[0]) title = msg.embeds[0].title || 'Untitled Panel';
-          messageUrl = `https://discord.com/channels/${guildId}/${data.channelId}/${data.messageId}`;
-        }
-      } catch {}
-      panels.push({ messageId: data.messageId, channelId: data.channelId, channelName, title, roleCount: (data.roles||[]).length, messageUrl });
+
+      const channelName = channelMap[data.channelId] || data.channelId;
+      const messageUrl = `https://discord.com/channels/${guildId}/${data.channelId}/${data.messageId}`;
+      panels.push({
+        messageId: data.messageId,
+        channelId: data.channelId,
+        channelName,
+        title: `Panel in #${channelName}`,
+        roleCount: Array.isArray(data.roles) ? data.roles.length : 0,
+        messageUrl,
+      });
     }
     res.json({ panels });
   } catch (e) {
+    logger.error('[DASHBOARD] Role panels fetch error:', e);
     res.status(500).json({ error: 'Failed to load panels' });
   }
 });
