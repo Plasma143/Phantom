@@ -668,9 +668,9 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           <button id="btn-enterprise" style="${INACTIVE}" onclick="showTab('enterprise',this)">💎 Enterprise${!isEnterprise ? ' 💎' : ''}</button>
           <button id="btn-tickets" style="${INACTIVE}" onclick="showTab('tickets',this)">🎫 Tickets</button>
           <button id="btn-messages" style="${INACTIVE}" onclick="showTab('messages',this)">📨 Messages</button>
+          <button id="btn-security" style="${INACTIVE}" onclick="showTab('security',this)">🔐 Security</button>
           <button id="btn-role-panels" style="${INACTIVE}" onclick="showTab('role-panels',this)">🎭 Role Panels</button>
           <button id="btn-applications" style="${INACTIVE}" onclick="showTab('applications',this)">📝 Applications${!isPremium ? ' 🔒' : ''}</button>
-          <button id="btn-security" style="${INACTIVE}" onclick="showTab('security',this)">🔐 Security</button>
         </div>
 
         <!-- ── Tab: Overview ── -->
@@ -1895,7 +1895,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
         </div>
 
         <script>
-          var ALL_TABS=['overview','group-setup','rank-management','audit-logs','members','documents','verification','join-requests','rank-history','enterprise','tickets','messages','security'];
+          var ALL_TABS=['overview','group-setup','rank-management','audit-logs','members','documents','verification','join-requests','rank-history','enterprise','tickets','messages','role-panels','applications','security'];
           function showTab(name,btn){
             ALL_TABS.forEach(function(t){
               document.getElementById('tab-'+t).style.display='none';
