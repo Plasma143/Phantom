@@ -137,8 +137,8 @@ dashboardAuthRouter.get('/sw.js', (req, res) => {
   res.set('Content-Type', 'application/javascript');
   res.set('Cache-Control', 'no-cache');
   res.send(`
-const CACHE = 'phantom-v1';
-const SHELL = ['/dashboard', '/manifest.json', '/phantom-icon.png'];
+const CACHE = 'phantom-v2';
+const SHELL = ['/dashboard', '/manifest.json'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)));
@@ -292,6 +292,7 @@ function renderPage(bodyHtml, user = null) {
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Phantom" />
+        <link rel="icon" type="image/png" href="/favicon.ico" />
         <link rel="manifest" href="/manifest.json" />
         <link rel="apple-touch-icon" href="/phantom-icon-192.png" />
         <title>Phantom Dashboard</title>
