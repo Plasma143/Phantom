@@ -69,7 +69,66 @@ dashboardAuthRouter.get('/favicon.ico', (req, res) => {
   res.send(FAVICON_PNG);
 });
 
-// ---- Tiny manual cookie helpers (avoids adding cookie-parser as a dependency) ----
+// ── PWA: App icon (reuses existing PNG) ──────────────────────────────────────
+dashboardAuthRouter.get('/phantom-icon.png', (req, res) => {
+  res.set('Content-Type', 'image/png');
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.send(FAVICON_PNG);
+});
+
+// ── PWA: Web manifest ────────────────────────────────────────────────────────
+dashboardAuthRouter.get('/manifest.json', (req, res) => {
+  res.set('Content-Type', 'application/manifest+json');
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.json({
+    name: 'Phantom Dashboard',
+    short_name: 'Phantom',
+    description: 'Manage your Roblox group & Discord server with Phantom Bot.',
+    start_url: '/dashboard',
+    scope: '/',
+    display: 'standalone',
+    orientation: 'portrait-primary',
+    background_color: '#1e1f22',
+    theme_color: '#5865F2',
+    icons: [
+      { src: '/phantom-icon.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+      { src: '/phantom-icon.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+    ],
+    categories: ['utilities', 'productivity'],
+  });
+});
+
+// ── PWA: Service worker ───────────────────────────────────────────────────────
+dashboardAuthRouter.get('/sw.js', (req, res) => {
+  res.set('Content-Type', 'application/javascript');
+  res.set('Cache-Control', 'no-cache');
+  res.send(`
+const CACHE = 'phantom-v1';
+const SHELL = ['/dashboard', '/manifest.json', '/phantom-icon.png'];
+
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)));
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', e => {
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))));
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
+  e.respondWith(
+    fetch(e.request).then(res => {
+      if (res.ok) { const c = res.clone(); caches.open(CACHE).then(cc => cc.put(e.request, c)); }
+      return res;
+    }).catch(() => caches.match(e.request).then(r => r || caches.match('/dashboard')))
+  );
+});
+  `.trim());
+});
+
+
 
 function getCookie(req, name) {
   const header = req.headers.cookie;
@@ -195,6 +254,12 @@ function renderPage(bodyHtml, user = null) {
     <html>
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="theme-color" content="#5865F2" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-title" content="Phantom" />
+        <link rel="manifest" href="/manifest.json" />
+        <link rel="apple-touch-icon" href="/phantom-icon.png" />
         <title>Phantom Dashboard</title>
         <style>
           * { box-sizing: border-box; }
@@ -214,11 +279,39 @@ function renderPage(bodyHtml, user = null) {
             <a href="/dashboard" style="color:#fff; text-decoration:none; font-weight:bold; font-size:18px;">Phantom Dashboard</a>
             <a href="/dashboard/commands" style="color:#aaa; text-decoration:none; font-size:14px;">Commands</a>
           </div>
-          ${navUser}
+          <div style="display:flex; align-items:center; gap:12px;">
+            <button id="pwaInstallBtn" onclick="installPWA()" style="display:none; padding:7px 14px; background:#5865F2; color:#fff; border:none; border-radius:7px; font-size:13px; font-weight:600; cursor:pointer;">📲 Install App</button>
+            ${navUser}
+          </div>
         </div>
         <div style="padding:40px 20px; text-align:center;">
           ${bodyHtml}
         </div>
+        <script>
+          if('serviceWorker' in navigator){
+            navigator.serviceWorker.register('/sw.js').catch(function(){});
+          }
+          var _pwaPrompt=null;
+          window.addEventListener('beforeinstallprompt',function(e){
+            e.preventDefault();_pwaPrompt=e;
+            var b=document.getElementById('pwaInstallBtn');
+            if(b)b.style.display='block';
+          });
+          window.addEventListener('appinstalled',function(){
+            _pwaPrompt=null;
+            var b=document.getElementById('pwaInstallBtn');
+            if(b)b.style.display='none';
+          });
+          function installPWA(){
+            if(!_pwaPrompt)return;
+            _pwaPrompt.prompt();
+            _pwaPrompt.userChoice.then(function(){
+              _pwaPrompt=null;
+              var b=document.getElementById('pwaInstallBtn');
+              if(b)b.style.display='none';
+            });
+          }
+        </script>
       </body>
     </html>
   `;
