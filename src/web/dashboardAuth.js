@@ -517,7 +517,7 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
 
     const { guild, user } = access;
 
-    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification, autoRank, enterprise, securityRaw, subscription, boostDiscount] = await Promise.all([
+    const [rolesRes, channelsRes, membersRes, roblox, auditLogs, verification, autoRank, enterprise, securityRaw, subscription, boostDiscount, scheduledAnns, inGameMonitor, joinNotify, groupFunds, applications] = await Promise.all([
       fetch(`https://discord.com/api/guilds/${guildId}/roles`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       fetch(`https://discord.com/api/guilds/${guildId}/channels`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
       fetch(`https://discord.com/api/guilds/${guildId}/members?limit=1000`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }),
@@ -529,6 +529,11 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
       pgDb.get(`security:${guildId}`),
       getSubscription(guildId),
       getBoostDiscount(user.id),
+      getConfigValue({ db }, guildId, 'scheduledAnnouncements', []),
+      getConfigValue({ db }, guildId, 'inGameMonitor', {}),
+      getConfigValue({ db }, guildId, 'joinNotify', {}),
+      getConfigValue({ db }, guildId, 'groupFunds', {}),
+      getConfigValue({ db }, guildId, 'applications', {}),
     ]);
 
     const allRoles = rolesRes.ok ? await rolesRes.json() : [];
@@ -663,6 +668,8 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
           <button id="btn-enterprise" style="${INACTIVE}" onclick="showTab('enterprise',this)">💎 Enterprise${!isEnterprise ? ' 💎' : ''}</button>
           <button id="btn-tickets" style="${INACTIVE}" onclick="showTab('tickets',this)">🎫 Tickets</button>
           <button id="btn-messages" style="${INACTIVE}" onclick="showTab('messages',this)">📨 Messages</button>
+          <button id="btn-role-panels" style="${INACTIVE}" onclick="showTab('role-panels',this)">🎭 Role Panels</button>
+          <button id="btn-applications" style="${INACTIVE}" onclick="showTab('applications',this)">📝 Applications${!isPremium ? ' 🔒' : ''}</button>
           <button id="btn-security" style="${INACTIVE}" onclick="showTab('security',this)">🔐 Security</button>
         </div>
 
@@ -1454,6 +1461,67 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
             <textarea name="verifyDescription" rows="4" placeholder="Click the button below to link your Roblox account and gain access to this server." maxlength="500" style="width:100%; ${fieldStyle} resize:vertical; font-family:inherit; margin-bottom:20px; box-sizing:border-box;">${enterprise.verifyDescription || ''}</textarea>
             <button type="submit" style="${buttonStyle}">Save Verification Message</button>
           </form>
+
+          <hr style="border:none;border-top:1px solid #2b2d31;margin:28px 0;" />
+
+          <!-- In-Game Monitoring (Premium) -->
+          <p style="font-weight:700;font-size:15px;margin:0 0 4px;">🎮 In-Game Monitoring</p>
+          <p style="color:#949ba4;font-size:13px;margin:0 0 16px;line-height:1.6;">Poll your Roblox game's player count and post live updates to a channel. Requires your game's Universe ID (find it in Creator Hub → your game → "Universe ID").</p>
+          <form method="POST" action="/dashboard/server/${guildId}/enterprise/in-game-monitor">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;background:#111214;padding:14px 16px;border-radius:8px;border:1px solid #2b2d31;">
+              <input type="checkbox" name="enabled" id="igmEnabled" value="1" ${inGameMonitor.enabled?'checked':''} style="width:16px;height:16px;accent-color:#7c3aed;cursor:pointer;" />
+              <label for="igmEnabled" style="color:#fff;font-size:14px;font-weight:600;cursor:pointer;">Enable in-game monitoring</label>
+            </div>
+            <p style="font-weight:700;font-size:13px;margin:0 0 6px;">Universe ID</p>
+            <input type="text" name="universeId" placeholder="e.g. 4922742303" value="${inGameMonitor.universeId||''}" maxlength="30" style="width:100%;${fieldStyle} margin-bottom:16px;box-sizing:border-box;" />
+            <p style="font-weight:700;font-size:13px;margin:0 0 6px;">Alert Channel</p>
+            <select name="channelId" style="width:100%;${fieldStyle} margin-bottom:16px;">
+              <option value="">-- Select channel --</option>${channelOptions(inGameMonitor.channelId)}
+            </select>
+            <p style="font-weight:700;font-size:13px;margin:0 0 6px;">Update Interval</p>
+            <select name="intervalMins" style="width:100%;${fieldStyle} margin-bottom:20px;">
+              <option value="5" ${inGameMonitor.intervalMins==5?'selected':''}>Every 5 minutes</option>
+              <option value="15" ${inGameMonitor.intervalMins==15?'selected':''}>Every 15 minutes</option>
+              <option value="30" ${inGameMonitor.intervalMins==30?'selected':''}>Every 30 minutes</option>
+              <option value="60" ${inGameMonitor.intervalMins==60?'selected':''}>Every hour</option>
+            </select>
+            <button type="submit" style="${buttonStyle}">Save Monitoring Settings</button>
+          </form>
+
+          <hr style="border:none;border-top:1px solid #2b2d31;margin:28px 0;" />
+
+          <!-- Join Notifications (Enterprise) -->
+          <p style="font-weight:700;font-size:15px;margin:0 0 4px;">🔔 Join Notifications</p>
+          <p style="color:#949ba4;font-size:13px;margin:0 0 16px;line-height:1.6;">Get alerted in a Discord channel when a specific Roblox player joins your game. Useful for high-profile players, blacklisted users, or VIPs.</p>
+          <form method="POST" action="/dashboard/server/${guildId}/enterprise/join-notify">
+            <p style="font-weight:700;font-size:13px;margin:0 0 6px;">Alert Channel</p>
+            <select name="channelId" style="width:100%;${fieldStyle} margin-bottom:16px;">
+              <option value="">-- Select channel --</option>${channelOptions(joinNotify.channelId)}
+            </select>
+            <p style="font-weight:700;font-size:13px;margin:0 0 6px;">Roblox Usernames to Watch <span style="color:#949ba4;font-weight:400;">(one per line, up to 20)</span></p>
+            <textarea name="watchList" rows="5" placeholder="Enter Roblox usernames, one per line" maxlength="2000" style="width:100%;${fieldStyle} resize:vertical;font-family:inherit;margin-bottom:20px;box-sizing:border-box;">${(joinNotify.watchList||[]).join('\n')}</textarea>
+            <button type="submit" style="${buttonStyle}">Save Join Notifications</button>
+          </form>
+
+          <hr style="border:none;border-top:1px solid #2b2d31;margin:28px 0;" />
+
+          <!-- Group Funds Tracker (Enterprise) -->
+          <p style="font-weight:700;font-size:15px;margin:0 0 4px;">💰 Group Funds Tracker</p>
+          <p style="color:#949ba4;font-size:13px;margin:0 0 16px;line-height:1.6;">Monitor your Roblox group's Robux balance and get alerted when it drops below a threshold. Requires your Open Cloud API key with Economy permission.</p>
+          <form method="POST" action="/dashboard/server/${guildId}/enterprise/group-funds">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;background:#111214;padding:14px 16px;border-radius:8px;border:1px solid #2b2d31;">
+              <input type="checkbox" name="enabled" id="gfEnabled" value="1" ${groupFunds.enabled?'checked':''} style="width:16px;height:16px;accent-color:#7c3aed;cursor:pointer;" />
+              <label for="gfEnabled" style="color:#fff;font-size:14px;font-weight:600;cursor:pointer;">Enable funds tracking</label>
+            </div>
+            <p style="font-weight:700;font-size:13px;margin:0 0 6px;">Alert Channel</p>
+            <select name="channelId" style="width:100%;${fieldStyle} margin-bottom:16px;">
+              <option value="">-- Select channel --</option>${channelOptions(groupFunds.channelId)}
+            </select>
+            <p style="font-weight:700;font-size:13px;margin:0 0 6px;">Alert Threshold (Robux)</p>
+            <p style="color:#949ba4;font-size:12px;margin:0 0 8px;">Send an alert when balance drops below this amount.</p>
+            <input type="number" name="threshold" placeholder="e.g. 1000" value="${groupFunds.threshold||''}" min="0" style="width:100%;${fieldStyle} margin-bottom:20px;box-sizing:border-box;" />
+            <button type="submit" style="${buttonStyle}">Save Funds Tracker</button>
+          </form>
           `}
         </div>
 
@@ -1607,9 +1675,151 @@ dashboardAuthRouter.get('/dashboard/server/:guildId', async (req, res) => {
               }catch(e){status.textContent='❌ Error'; status.style.color='#ed4245';}
             }
           </script>
+
+          <hr style="border:none;border-top:1px solid #2b2d31;margin:28px 0;" />
+
+          <!-- Scheduled Announcements -->
+          <p style="font-weight:700;font-size:18px;margin:0 0 4px;">⏰ Scheduled Announcements</p>
+          <p style="color:#949ba4;font-size:13px;margin:0 0 20px;">Schedule embeds to post automatically at a specific date and time. Free: up to 3 pending. Premium: unlimited.</p>
+
+          <!-- Existing scheduled list -->
+          <div id="schedList" style="margin-bottom:20px;">
+            ${(Array.isArray(scheduledAnns)?scheduledAnns:[]).length===0
+              ? `<p style="color:#5e6272;font-size:13px;">No announcements scheduled.</p>`
+              : (Array.isArray(scheduledAnns)?scheduledAnns:[]).map((a,i)=>`
+                <div style="background:#111214;border:1px solid #2b2d31;border-radius:10px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                  <div>
+                    <p style="font-weight:700;font-size:14px;color:#fff;margin:0 0 3px;">${(a.title||'(no title)').replace(/</g,'&lt;')}</p>
+                    <p style="color:#949ba4;font-size:12px;margin:0;">#${(a.channelName||a.channelId||'?')} · <span style="color:#ffd166;">${new Date(a.sendAt).toLocaleString()}</span></p>
+                  </div>
+                  <button onclick="deleteScheduled('${a.id}')" style="padding:6px 12px;background:#ed424520;color:#ed4245;border:1px solid #ed424540;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>
+                </div>`).join('')}
+          </div>
+
+          <!-- New announcement form -->
+          ${(!isPremium && (Array.isArray(scheduledAnns)?scheduledAnns:[]).length>=3)
+            ? `<div style="background:#1a0840;border:1px solid #5b21b6;border-radius:10px;padding:20px;text-align:center;"><p style="color:#a78bfa;font-size:13px;margin:0;">Free servers can have up to 3 scheduled announcements at once. <a href="/upgrade/${guildId}?plan=premium" style="color:#c084fc;text-decoration:underline;">Upgrade to Premium</a> for unlimited.</p></div>`
+            : `<div style="background:#111214;border:1px solid #2b2d31;border-radius:10px;padding:20px;">
+                <p style="font-weight:700;font-size:14px;color:#fff;margin:0 0 16px;">➕ Schedule New Announcement</p>
+                <p style="font-weight:600;font-size:13px;margin:0 0 6px;color:#fff;">Channel</p>
+                <select id="schedChannel" style="width:100%;${fieldStyle} margin-bottom:14px;"><option value="">-- Select channel --</option>${channelOptions('')}</select>
+                <p style="font-weight:600;font-size:13px;margin:0 0 6px;color:#fff;">Send at (your local time)</p>
+                <input type="datetime-local" id="schedTime" style="width:100%;${fieldStyle} margin-bottom:14px;box-sizing:border-box;" />
+                <p style="font-weight:600;font-size:13px;margin:0 0 6px;color:#fff;">Title</p>
+                <input type="text" id="schedTitle" placeholder="Announcement title" maxlength="256" style="width:100%;${fieldStyle} margin-bottom:14px;box-sizing:border-box;" />
+                <p style="font-weight:600;font-size:13px;margin:0 0 6px;color:#fff;">Message</p>
+                <textarea id="schedBody" rows="4" placeholder="Message body (markdown supported)" style="width:100%;${fieldStyle} resize:vertical;font-family:inherit;margin-bottom:16px;box-sizing:border-box;"></textarea>
+                <button onclick="addScheduled()" style="${buttonStyle}">Schedule Announcement</button>
+                <p id="schedStatus" style="font-size:13px;margin:10px 0 0;color:#949ba4;"></p>
+              </div>`}
+
+          <script>
+            async function addScheduled(){
+              var ch=document.getElementById('schedChannel').value;
+              var t=document.getElementById('schedTime').value;
+              var title=document.getElementById('schedTitle').value.trim();
+              var body=document.getElementById('schedBody').value.trim();
+              var st=document.getElementById('schedStatus');
+              if(!ch){alert('Select a channel.');return;}
+              if(!t){alert('Pick a date and time.');return;}
+              if(!title&&!body){alert('Add a title or message.');return;}
+              var ts=new Date(t).getTime();
+              if(ts<=Date.now()){alert('Please pick a future time.');return;}
+              st.textContent='Saving…';st.style.color='#949ba4';
+              try{
+                var r=await fetch('/dashboard/server/${guildId}/messages/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channelId:ch,sendAt:ts,title,body})});
+                var d=await r.json();
+                if(d.success){st.style.color='#57f287';st.textContent='✅ Scheduled!';setTimeout(()=>location.reload(),1000);}
+                else{st.style.color='#ed4245';st.textContent='❌ '+(d.error||'Failed');}
+              }catch(e){st.style.color='#ed4245';st.textContent='❌ Error';}
+            }
+            async function deleteScheduled(id){
+              if(!confirm('Cancel this scheduled announcement?'))return;
+              var r=await fetch('/dashboard/server/${guildId}/messages/schedule/'+id,{method:'DELETE'});
+              var d=await r.json();
+              if(d.success)location.reload();else alert('Error: '+(d.error||'unknown'));
+            }
+          </script>
         </div>
 
-        <!-- ── Tab: Security ── -->
+        <!-- ── Tab: Role Panels ── -->
+        <div id="tab-role-panels" style="display:none; ${PANEL}">
+          <p style="font-weight:700; font-size:18px; margin:0 0 4px;">🎭 Role Panels</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 20px;">Button/dropdown panels that let members self-assign roles. Use <code style="background:#111214;padding:2px 5px;border-radius:4px;">/reactroles setup</code> in Discord to create a new panel. Free: up to 5 panels.</p>
+          <div id="rpanelsContainer" style="margin-bottom:20px;"><p style="color:#5e6272;font-size:13px;">Loading panels…</p></div>
+          <div style="background:#111214; border:1px dashed #2b2d31; border-radius:10px; padding:16px; text-align:center;">
+            <p style="color:#949ba4; font-size:13px; margin:0;">To create a new panel, use <code style="background:#1e1f22;padding:2px 6px;border-radius:4px;">/reactroles setup</code> in your Discord server.</p>
+          </div>
+          <script>
+            (async function loadRolePanels(){
+              const c=document.getElementById('rpanelsContainer');
+              try{
+                const r=await fetch('/dashboard/server/${guildId}/role-panels');
+                const d=await r.json();
+                if(!d.panels||d.panels.length===0){c.innerHTML='<p style="color:#5e6272;font-size:13px;">No role panels yet.</p>';return;}
+                function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+                c.innerHTML=d.panels.map(function(p){
+                  return '<div style="background:#111214;border:1px solid #2b2d31;border-radius:10px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+                    +'<div><p style="font-weight:700;font-size:14px;color:#fff;margin:0 0 3px;">'+esc(p.title)+'</p>'
+                    +'<p style="color:#949ba4;font-size:12px;margin:0;">#'+esc(p.channelName)+' \xb7 '+p.roleCount+' role'+(p.roleCount!==1?'s':'')+'</p></div>'
+                    +'<div style="display:flex;gap:8px;">'
+                    +(p.messageUrl?'<a href="'+p.messageUrl+'" target="_blank" style="padding:6px 12px;background:#2b2d31;color:#fff;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;">View ↗</a>':'')
+                    +'<button onclick="deleteRolePanel(\''+p.messageId+'\')" style="padding:6px 12px;background:#ed424520;color:#ed4245;border:1px solid #ed424540;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">Delete</button>'
+                    +'</div></div>';
+                }).join('');
+              }catch(e){c.innerHTML='<p style="color:#ed4245;font-size:13px;">Failed to load panels.</p>';}
+            })();
+            async function deleteRolePanel(mid){
+              if(!confirm('Delete this role panel? This cannot be undone.'))return;
+              const r=await fetch('/dashboard/server/${guildId}/role-panels/'+mid,{method:'DELETE'});
+              const d=await r.json();
+              if(d.success)location.reload();else alert('Error: '+(d.error||'unknown'));
+            }
+          </script>
+        </div>
+
+        <!-- ── Tab: Applications ── -->
+        <div id="tab-applications" style="display:none; ${PANEL}">
+          <p style="font-weight:700; font-size:18px; margin:0 0 4px;">📝 Applications</p>
+          <p style="color:#949ba4; font-size:13px; margin:0 0 24px;">Let members apply for roles or ranks through Discord. Submissions are posted to your review channel where staff can Accept or Deny.</p>
+          ${!isPremium ? `<div style="background:#1a0840;border:1px solid #5b21b6;border-radius:10px;padding:24px;text-align:center;"><p style="color:#c084fc;font-size:28px;margin:0 0 8px;">🔒</p><p style="color:#fff;font-weight:700;font-size:16px;margin:0 0 6px;">Premium Feature</p><p style="color:#a78bfa;font-size:13px;margin:0 0 16px;">Upgrade to enable the application system.</p><a href="/upgrade/${guildId}?plan=premium" style="display:inline-block;padding:10px 24px;background:#7c3aed;color:#fff;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">Upgrade — $7/mo</a></div>` : `
+          <form method="POST" action="/dashboard/server/${guildId}/applications/settings">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;background:#111214;padding:14px 16px;border-radius:8px;border:1px solid #2b2d31;">
+              <input type="checkbox" name="enabled" id="appEnabled" value="1" ${applications.enabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:#5865F2;cursor:pointer;" />
+              <label for="appEnabled" style="color:#fff;font-size:14px;font-weight:600;cursor:pointer;">Applications open</label>
+            </div>
+            <p style="font-weight:700;font-size:15px;margin:0 0 4px;">📋 Form Title</p>
+            <p style="color:#949ba4;font-size:13px;margin:0 0 10px;">Shown at the top of the application embed.</p>
+            <input type="text" name="formTitle" placeholder="Apply for Membership" value="${applications.formTitle||''}" maxlength="80" style="width:100%;${fieldStyle} margin-bottom:20px;box-sizing:border-box;" />
+
+            <hr style="border:none;border-top:1px solid #2b2d31;margin:0 0 20px;" />
+            <p style="font-weight:700;font-size:15px;margin:0 0 4px;">❓ Questions</p>
+            <p style="color:#949ba4;font-size:13px;margin:0 0 16px;">Up to 5 questions. Members answer these in Discord modals when they run <code style="background:#111214;padding:2px 5px;border-radius:4px;">/apply</code>.</p>
+            ${[1,2,3,4,5].map(i=>`
+            <div style="margin-bottom:10px;">
+              <p style="font-weight:600;font-size:13px;margin:0 0 5px;color:#fff;">Question ${i} ${i>1?'<span style="color:#5e6272;font-weight:400;">(optional)</span>':''}</p>
+              <input type="text" name="q${i}" placeholder="${i===1?'Why do you want to join?':i===2?'How old are you?':i===3?'Tell us about yourself.':i===4?'Do you have any prior experience?':'Any additional info?'}" value="${applications['q'+i]||''}" maxlength="100" style="width:100%;${fieldStyle} box-sizing:border-box;" />
+            </div>`).join('')}
+
+            <hr style="border:none;border-top:1px solid #2b2d31;margin:20px 0;" />
+            <p style="font-weight:700;font-size:15px;margin:0 0 4px;">📣 Review Channel</p>
+            <p style="color:#949ba4;font-size:13px;margin:0 0 10px;">Where application submissions are posted for staff to review.</p>
+            <select name="reviewChannelId" style="width:100%;${fieldStyle} margin-bottom:20px;">
+              <option value="">-- Select channel --</option>${channelOptions(applications.reviewChannelId)}
+            </select>
+
+            <p style="font-weight:700;font-size:15px;margin:0 0 4px;">🔔 Ping Role <span style="color:#949ba4;font-weight:400;font-size:13px;">(optional)</span></p>
+            <p style="color:#949ba4;font-size:13px;margin:0 0 10px;">Role pinged in the review channel when a new application is submitted.</p>
+            <select name="pingRoleId" style="width:100%;${fieldStyle} margin-bottom:24px;">
+              <option value="">-- None --</option>${roleOptions(applications.pingRoleId||'')}
+            </select>
+
+            <button type="submit" style="${buttonStyle}">Save Application Settings</button>
+          </form>
+          `}
+        </div>
+
+        <!-- ── Scheduled Announcements (appended inside Messages tab) ── -->
         <div id="tab-security" style="display:none; ${PANEL}">
           <p style="font-weight:700; font-size:18px; margin:0 0 4px;">🔐 Security</p>
           <p style="color:#949ba4; font-size:13px; margin:0 0 20px;">Protect your server from raids, bots, and suspicious accounts. Use <code style="background:#111214;padding:2px 5px;border-radius:4px;">/security scan @user</code> to risk-assess any member.</p>
@@ -2677,4 +2887,148 @@ dashboardAuthRouter.post('/dashboard/server/:guildId/join-requests/settings', as
   const current = await getConfigValue({ db }, guildId, 'joinRequests', {});
   await updateGuildConfig({ db }, guildId, { joinRequests: { ...current, logChannelId, customFormat } });
   res.redirect(`/dashboard/server/${guildId}?success=Join+request+settings+saved#join-requests`);
+});
+
+// ── Role Panels: List ─────────────────────────────────────────────────────────
+dashboardAuthRouter.get('/dashboard/server/:guildId/role-panels', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  try {
+    const keys = await db.list(`reaction_roles:${guildId}:`);
+    if (!Array.isArray(keys) || keys.length === 0) return res.json({ panels: [] });
+    const BOT_TOKEN = process.env.DISCORD_TOKEN;
+    const panels = [];
+    for (const key of keys) {
+      const data = await db.get(key);
+      if (!data || !data.messageId || !data.channelId) continue;
+      let channelName = data.channelId;
+      let title = 'Untitled Panel';
+      let messageUrl = null;
+      try {
+        const chRes = await fetch(`https://discord.com/api/channels/${data.channelId}`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } });
+        if (chRes.ok) { const ch = await chRes.json(); channelName = ch.name || data.channelId; }
+        const msgRes = await fetch(`https://discord.com/api/channels/${data.channelId}/messages/${data.messageId}`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } });
+        if (msgRes.ok) {
+          const msg = await msgRes.json();
+          if (msg.embeds && msg.embeds[0]) title = msg.embeds[0].title || 'Untitled Panel';
+          messageUrl = `https://discord.com/channels/${guildId}/${data.channelId}/${data.messageId}`;
+        }
+      } catch {}
+      panels.push({ messageId: data.messageId, channelId: data.channelId, channelName, title, roleCount: (data.roles||[]).length, messageUrl });
+    }
+    res.json({ panels });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to load panels' });
+  }
+});
+
+// ── Role Panels: Delete ───────────────────────────────────────────────────────
+dashboardAuthRouter.delete('/dashboard/server/:guildId/role-panels/:messageId', async (req, res) => {
+  const { guildId, messageId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  try {
+    const key = `reaction_roles:${guildId}:${messageId}`;
+    const data = await db.get(key);
+    if (data && data.channelId) {
+      const BOT_TOKEN = process.env.DISCORD_TOKEN;
+      await fetch(`https://discord.com/api/channels/${data.channelId}/messages/${messageId}`, { method: 'DELETE', headers: { Authorization: `Bot ${BOT_TOKEN}` } }).catch(() => {});
+    }
+    await db.delete(key);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete panel' });
+  }
+});
+
+// ── Scheduled Announcements: Add ─────────────────────────────────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/messages/schedule', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  const { channelId, sendAt, title, body } = req.body;
+  if (!channelId || !sendAt || (!title && !body)) return res.json({ error: 'Missing required fields' });
+  const ts = Number(sendAt);
+  if (!ts || ts <= Date.now()) return res.json({ error: 'Time must be in the future' });
+  const sub = await getSubscription(guildId);
+  const tier = isOwner(access.user.id) ? 'enterprise' : getTier(sub);
+  const isPremium = tier === 'premium' || tier === 'enterprise';
+  const current = await getConfigValue({ db }, guildId, 'scheduledAnnouncements', []);
+  const list = Array.isArray(current) ? current : [];
+  if (!isPremium && list.length >= 3) return res.json({ error: 'Free servers can only have 3 scheduled announcements. Upgrade to Premium for unlimited.' });
+  // get channel name for display
+  const BOT_TOKEN = process.env.DISCORD_TOKEN;
+  let channelName = channelId;
+  try { const r = await fetch(`https://discord.com/api/channels/${channelId}`, { headers: { Authorization: `Bot ${BOT_TOKEN}` } }); if (r.ok) { const c = await r.json(); channelName = c.name || channelId; } } catch {}
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+  list.push({ id, channelId, channelName, sendAt: ts, title: title||null, body: body||null });
+  await updateGuildConfig({ db }, guildId, { scheduledAnnouncements: list });
+  res.json({ success: true });
+});
+
+// ── Scheduled Announcements: Delete ──────────────────────────────────────────
+dashboardAuthRouter.delete('/dashboard/server/:guildId/messages/schedule/:id', async (req, res) => {
+  const { guildId, id } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  const current = await getConfigValue({ db }, guildId, 'scheduledAnnouncements', []);
+  const list = Array.isArray(current) ? current : [];
+  const updated = list.filter(a => a.id !== id);
+  await updateGuildConfig({ db }, guildId, { scheduledAnnouncements: updated });
+  res.json({ success: true });
+});
+
+// ── Applications: Save Settings ───────────────────────────────────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/applications/settings', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  const sub = await getSubscription(guildId);
+  const tier = isOwner(access.user.id) ? 'enterprise' : getTier(sub);
+  if (tier !== 'premium' && tier !== 'enterprise') return res.redirect(`/dashboard/server/${guildId}?error=Premium+required+for+Applications#applications`);
+  const { enabled, formTitle, q1, q2, q3, q4, q5, reviewChannelId, pingRoleId } = req.body;
+  const questions = [q1,q2,q3,q4,q5].map(q=>(q||'').trim()).filter(Boolean);
+  await updateGuildConfig({ db }, guildId, { applications: { enabled: !!enabled, formTitle: (formTitle||'').trim()||'Apply for Membership', q1:q1||'', q2:q2||'', q3:q3||'', q4:q4||'', q5:q5||'', reviewChannelId: reviewChannelId||null, pingRoleId: pingRoleId||null } });
+  res.redirect(`/dashboard/server/${guildId}?success=Application+settings+saved#applications`);
+});
+
+// ── Enterprise: In-Game Monitor ───────────────────────────────────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/enterprise/in-game-monitor', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  const sub = await getSubscription(guildId);
+  const tier = isOwner(access.user.id) ? 'enterprise' : getTier(sub);
+  if (tier !== 'premium' && tier !== 'enterprise') return res.redirect(`/dashboard/server/${guildId}?error=Premium+required#enterprise`);
+  const { enabled, universeId, channelId, intervalMins } = req.body;
+  await updateGuildConfig({ db }, guildId, { inGameMonitor: { enabled: !!enabled, universeId: (universeId||'').trim()||null, channelId: channelId||null, intervalMins: parseInt(intervalMins)||5 } });
+  res.redirect(`/dashboard/server/${guildId}?success=In-game+monitor+saved#enterprise`);
+});
+
+// ── Enterprise: Join Notifications ────────────────────────────────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/enterprise/join-notify', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  const sub = await getSubscription(guildId);
+  const tier = isOwner(access.user.id) ? 'enterprise' : getTier(sub);
+  if (tier !== 'enterprise') return res.redirect(`/dashboard/server/${guildId}?error=Enterprise+required#enterprise`);
+  const { channelId, watchList } = req.body;
+  const list = (watchList||'').split('\n').map(l=>l.trim()).filter(Boolean).slice(0,20);
+  await updateGuildConfig({ db }, guildId, { joinNotify: { channelId: channelId||null, watchList: list } });
+  res.redirect(`/dashboard/server/${guildId}?success=Join+notifications+saved#enterprise`);
+});
+
+// ── Enterprise: Group Funds Tracker ───────────────────────────────────────────
+dashboardAuthRouter.post('/dashboard/server/:guildId/enterprise/group-funds', async (req, res) => {
+  const { guildId } = req.params;
+  const access = await requireGuildAccess(req, res, guildId);
+  if (!access) return;
+  const sub = await getSubscription(guildId);
+  const tier = isOwner(access.user.id) ? 'enterprise' : getTier(sub);
+  if (tier !== 'enterprise') return res.redirect(`/dashboard/server/${guildId}?error=Enterprise+required#enterprise`);
+  const { enabled, channelId, threshold } = req.body;
+  await updateGuildConfig({ db }, guildId, { groupFunds: { enabled: !!enabled, channelId: channelId||null, threshold: parseInt(threshold)||0 } });
+  res.redirect(`/dashboard/server/${guildId}?success=Group+funds+tracker+saved#enterprise`);
 });
