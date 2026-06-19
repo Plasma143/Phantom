@@ -121,6 +121,7 @@ dashboardAuthRouter.get('/manifest.json', (req, res) => {
     background_color: '#1e1f22',
     theme_color: '#5865F2',
     icons: [
+      { src: '/favicon.ico', sizes: '64x64', type: 'image/png' },
       { src: '/phantom-icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
       { src: '/phantom-icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
     ],
@@ -137,7 +138,7 @@ dashboardAuthRouter.get('/sw.js', (req, res) => {
   res.set('Content-Type', 'application/javascript');
   res.set('Cache-Control', 'no-cache');
   res.send(`
-const CACHE = 'phantom-v2';
+const CACHE = 'phantom-v3';
 const SHELL = ['/dashboard', '/manifest.json'];
 
 self.addEventListener('install', e => {
@@ -289,12 +290,7 @@ function renderPage(bodyHtml, user = null) {
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="theme-color" content="#5865F2" />
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="Phantom" />
-        <link rel="icon" type="image/png" href="/favicon.ico" />
         <link rel="manifest" href="/manifest.json" />
-        <link rel="apple-touch-icon" href="/phantom-icon-192.png" />
         <title>Phantom Dashboard</title>
         <style>
           * { box-sizing: border-box; }
