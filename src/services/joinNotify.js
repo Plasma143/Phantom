@@ -1,10 +1,10 @@
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/database.js';
-import { getConfigValue } from '../utils/helpers.js';
+import { getConfigValue } from '../services/guildConfig.js';
 import { EmbedBuilder } from 'discord.js';
 
-const CHECK_INTERVAL_MS = 3 * 60 * 1000; // check every 3 minutes
-const seenOnline = new Map(); // `${guildId}:${userId}` -> last seen timestamp
+const CHECK_INTERVAL_MS = 3 * 60 * 1000;
+const seenOnline = new Map();
 
 export function startJoinNotify(client) {
   logger.info('[JOINNOTIFY] Join notification service started');
@@ -16,25 +16,19 @@ async function checkAll(client) {
   try { keys = await db.list('guild:'); } catch { return; }
 
   for (const key of keys) {
-    const guildId = key.replace('guild:', '');
+    const guildId = key.replace('guild:', '').replace(':config', '');
+    if (!guildId || guildId.includes(':')) continue;
     try {
-      const cfg = await getConfigValue({ db }, guildId, 'joinNotify', {});
+      const cfg = await getConfigValue(client, guildId, 'joinNotify', {});
       if (!cfg.channelId || !Array.isArray(cfg.watchList) || cfg.watchList.length === 0) continue;
-
-      // Resolve usernames to IDs once (cached per username)
       for (const username of cfg.watchList) {
-        try {
-          await checkUser(client, guildId, cfg, username);
-        } catch {}
+        try { await checkUser(client, guildId, cfg, username); } catch {}
       }
-    } catch (err) {
-      logger.error(`[JOINNOTIFY] Error checking guild ${guildId}:`, err);
-    }
+    } catch (err) { logger.error(`[JOINNOTIFY] Error checking guild ${guildId}:`, err); }
   }
 }
 
 async function checkUser(client, guildId, cfg, username) {
-  // Get user ID from username
   const idRes = await fetch('https://users.roblox.com/v1/usernames/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -45,7 +39,6 @@ async function checkUser(client, guildId, cfg, username) {
   const user = idData?.data?.[0];
   if (!user) return;
 
-  // Get presence
   const presRes = await fetch('https://presence.roblox.com/v1/presence/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -57,13 +50,9 @@ async function checkUser(client, guildId, cfg, username) {
   if (!pres) return;
 
   const stateKey = `${guildId}:${user.id}`;
-  const wasOnline = seenOnline.has(stateKey);
-
-  // userPresenceType: 0 = offline, 1 = online, 2 = in game, 3 = in studio
   if (pres.userPresenceType === 2) {
-    if (!wasOnline) {
+    if (!seenOnline.has(stateKey)) {
       seenOnline.set(stateKey, Date.now());
-      // Send alert
       const channel = await client.channels.fetch(cfg.channelId).catch(() => null);
       if (!channel) return;
       const embed = new EmbedBuilder()
