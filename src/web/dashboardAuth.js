@@ -270,7 +270,6 @@ function renderPage(bodyHtml, user = null) {
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="theme-color" content="#5865F2" />
-        <link rel="manifest" href="/manifest.json" />
         <title>Phantom Dashboard</title>
         <style>
           * { box-sizing: border-box; }
