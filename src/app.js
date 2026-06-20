@@ -334,6 +334,7 @@ class PhantomBot extends Client {
   <p>Phantom connects your Discord server to your Roblox group — verification, role sync, rank management, and more, all from one dashboard.</p>
   <div class="hero-buttons">
     <a href="${INVITE_URL}" class="btn btn-primary">➕ Add to Server — Free</a>
+    <a href="/download/app" class="btn btn-secondary" style="display:inline-flex;align-items:center;gap:8px;">📱 Download Android App</a>
     <a href="/dashboard" class="btn btn-secondary">View Dashboard</a>
   </div>
 </section>
