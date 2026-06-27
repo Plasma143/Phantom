@@ -1,18 +1,23 @@
 // src/interactions/modals/partnership.js
-// Handles partnership_ad_modal (post to partnerships channel)
+// Handles partnership_ad_modal (post to partnerships channel + grant partner trial)
 // and partnership_deny_modal (send denial and close ticket).
 import { MessageFlags, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { logger } from '../../utils/logger.js';
+import { getSubscription } from '../../web/stripePayments.js';
+import { db } from '../../utils/database.js';
+
+const PARTNER_TRIAL_WEEKS = 3;
 
 const partnershipAdModal = {
   name: 'partnership_ad_modal',
   async execute(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    const serverName  = interaction.fields.getTextInputValue('server_name').trim();
-    const inviteLink  = interaction.fields.getTextInputValue('invite_link').trim();
-    const description = interaction.fields.getTextInputValue('description').trim();
-    const memberCount = interaction.fields.getTextInputValue('member_count').trim();
+    const serverName     = interaction.fields.getTextInputValue('server_name').trim();
+    const inviteLink     = interaction.fields.getTextInputValue('invite_link').trim();
+    const description    = interaction.fields.getTextInputValue('description').trim();
+    const memberCount    = interaction.fields.getTextInputValue('member_count').trim();
+    const partnerGuildId = interaction.fields.getTextInputValue('partner_guild_id')?.trim() || '';
 
     // Find the #partnerships channel
     const partnershipsChannel = interaction.guild.channels.cache.find(
@@ -50,6 +55,45 @@ const partnershipAdModal = {
         .setColor(0x57f287)
       ],
     });
+
+    // ── Grant partner bonus trial ───────────────────────────────────────
+    if (partnerGuildId && /^\d{17,20}$/.test(partnerGuildId)) {
+      try {
+        const existingSub = await getSubscription(partnerGuildId);
+        const canGrant = !existingSub || existingSub.tier === 'free' || existingSub.wasTrialUser;
+
+        if (canGrant) {
+          const trialEnd = Date.now() + PARTNER_TRIAL_WEEKS * 7 * 24 * 60 * 60 * 1000;
+          await db.set(`subscription:${partnerGuildId}`, {
+            tier: 'premium',
+            status: 'trialing',
+            isTrial: true,
+            isPartnerTrial: true,
+            trialEnd,
+            trialGrantedAt: Date.now(),
+          });
+
+          await interaction.channel.send({
+            embeds: [new EmbedBuilder()
+              .setTitle(`🎁 ${PARTNER_TRIAL_WEEKS}-Week Partner Trial Granted`)
+              .setDescription(
+                `A **${PARTNER_TRIAL_WEEKS}-week Premium trial** has been granted to the partner server.\n` +
+                `Expires: <t:${Math.floor(trialEnd / 1000)}:F>`
+              )
+              .setColor(0x7c3aed)
+            ],
+          });
+
+          logger.info(`[Partnership] Granted ${PARTNER_TRIAL_WEEKS}-week partner trial to guild ${partnerGuildId} (${serverName})`);
+        } else {
+          await interaction.channel.send({
+            content: `ℹ️ Partner server \`${partnerGuildId}\` already has an active subscription — no trial granted.`,
+          });
+        }
+      } catch (err) {
+        logger.error('[Partnership] Failed to grant partner trial:', err.message);
+      }
+    }
 
     // Disable the accept/deny buttons in the original message
     try {
