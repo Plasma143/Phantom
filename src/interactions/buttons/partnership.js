@@ -8,11 +8,10 @@ import { logger } from '../../utils/logger.js';
 const partnershipAccept = {
   name: 'partnership_accept',
   async execute(interaction) {
-    // Show advertisement collection modal
+    // Show advertisement collection modal (5 fields — last one is optional partner server ID)
     const modal = new ModalBuilder()
       .setCustomId('partnership_ad_modal')
       .setTitle('Partnership — Advertisement');
-
     modal.addComponents(
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
@@ -50,8 +49,16 @@ const partnershipAccept = {
           .setRequired(true)
           .setMaxLength(20)
       ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('partner_guild_id')
+          .setLabel('Partner Server ID (optional — for bonus trial)')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('Right-click their server icon → Copy Server ID')
+          .setRequired(false)
+          .setMaxLength(20)
+      ),
     );
-
     await interaction.showModal(modal);
   },
 };
@@ -62,7 +69,6 @@ const partnershipDeny = {
     const modal = new ModalBuilder()
       .setCustomId('partnership_deny_modal')
       .setTitle('Partnership — Denial Reason');
-
     modal.addComponents(
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
@@ -74,7 +80,6 @@ const partnershipDeny = {
           .setMaxLength(500)
       ),
     );
-
     await interaction.showModal(modal);
   },
 };
