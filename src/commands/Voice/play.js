@@ -1,70 +1,76 @@
 // src/commands/Voice/play.js
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
-import { useMainPlayer } from 'discord-player';
+// Play royalty-free music from Jamendo (100% legal, CC licensed).
+import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
+import { joinVoiceChannel } from '@discordjs/voice';
+import { musicQueues, createGuildQueue, searchJamendo, formatTrack, playNext } from '../../services/musicQueue.js';
+import { logger } from '../../utils/logger.js';
 
-// If a YouTube URL is given, fetch the video title via oEmbed and search by that
-// (discord-player has no YouTube URL extractor, but SoundCloud handles title searches)
-async function resolveQuery(query) {
-  const ytMatch = query.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-  if (!ytMatch) return query;
-  try {
-    const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(query)}&format=json`);
-    if (res.ok) {
-      const data = await res.json();
-      return data.title || query;
-    }
-  } catch {}
-  return query;
-}
+function err(msg) { return new EmbedBuilder().setColor(0xed4245).setDescription(`❌ ${msg}`); }
 
 export default {
   data: new SlashCommandBuilder()
     .setName('play')
-    .setDescription('Play a song or playlist in your voice channel')
-    .addStringOption(opt =>
-      opt.setName('query')
-        .setDescription('Song name, artist, or URL')
+    .setDescription('Play royalty-free music from Jamendo')
+    .setDMPermission(false)
+    .addStringOption(o =>
+      o.setName('query')
+        .setDescription('Song name, artist, or genre to search')
         .setRequired(true)
     ),
+  category: 'voice',
 
-  async execute(interaction, client) {
-    await interaction.deferReply();
+  async execute(interaction) {
+    const query = interaction.options.getString('query');
+    const vc    = interaction.member.voice?.channel;
 
-    const voiceChannel = interaction.member.voice.channel;
-    if (!voiceChannel) {
-      return interaction.editReply({ embeds: [errEmbed('Join a voice channel first.')] });
+    if (!vc) {
+      return interaction.reply({ embeds: [err('Join a voice channel first.')], flags: MessageFlags.Ephemeral });
     }
 
-    const rawQuery = interaction.options.getString('query');
-    const query = await resolveQuery(rawQuery);
-    const player = useMainPlayer();
+    await interaction.deferReply();
 
     try {
-      const { track } = await player.play(voiceChannel, query, {
-        requestedBy: interaction.user,
-        nodeOptions: {
-          metadata: { channel: interaction.channel },
-          selfDeaf: true,
-          volume: 80,
-          leaveOnEmpty: true,
-          leaveOnEmptyCooldown: 300000, // 5 minutes when VC is empty
-          leaveOnEnd: false,            // stay in VC after queue ends
-        },
-      });
+      const results = await searchJamendo(query, 1);
+      if (!results.length) {
+        return interaction.editReply({ embeds: [err(`No tracks found for **${query}**. Try a different search.`)] });
+      }
 
-      return interaction.editReply({
-        embeds: [new EmbedBuilder()
+      const track   = formatTrack(results[0]);
+      const guildId = interaction.guildId;
+
+      let q = musicQueues.get(guildId);
+      if (!q) {
+        q = createGuildQueue(guildId, interaction.channel);
+        const connection = joinVoiceChannel({
+          channelId:         vc.id,
+          guildId,
+          adapterCreator:    interaction.guild.voiceAdapterCreator,
+          selfDeaf:          true,
+        });
+        connection.subscribe(q.player);
+      }
+      q.textChannel = interaction.channel;
+
+      if (q.current) {
+        q.queue.push(track);
+        const embed = new EmbedBuilder()
+          .setTitle('➕ Added to Queue')
+          .setDescription(`**[${track.title}](${track.jamendoUrl})**\nby ${track.artist}`)
           .setColor(0x7c3aed)
-          .setDescription(`✅ **[${track.title}](${track.url})** added to queue`)
-          .setThumbnail(track.thumbnail)
-        ],
-      });
-    } catch (err) {
-      return interaction.editReply({ embeds: [errEmbed(`Could not play that track: ${err.message}`)] });
+          .addFields({ name: 'Position', value: String(q.queue.length), inline: true })
+          .setFooter({ text: '✅ Royalty-free via Jamendo' });
+        if (track.image) embed.setThumbnail(track.image);
+        return interaction.editReply({ embeds: [embed] });
+      } else {
+        q.queue.push(track);
+        await playNext(guildId);
+        return interaction.editReply({
+          embeds: [new EmbedBuilder().setColor(0x57f287).setDescription(`▶️ Starting **${track.title}** by ${track.artist}`)]
+        });
+      }
+    } catch (e) {
+      logger.error('[Music] Play error:', e.message);
+      return interaction.editReply({ embeds: [err(`Something went wrong: ${e.message}`)] });
     }
   },
 };
-
-function errEmbed(msg) {
-  return new EmbedBuilder().setColor(0xed4245).setDescription(`❌ ${msg}`);
-}
