@@ -1,177 +1,118 @@
 // src/commands/Voice/music.js
-// Houses all music control commands as subcommands of /music
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
-import { useQueue } from 'discord-player';
+// Music controls: skip, stop, pause, resume, queue, nowplaying, volume, shuffle, loop.
+import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
+import { musicQueues, destroyGuildQueue, formatDuration } from '../../services/musicQueue.js';
 
-function errEmbed(msg) {
-  return new EmbedBuilder().setColor(0xed4245).setDescription(`❌ ${msg}`);
-}
-
-function infoEmbed(msg) {
-  return new EmbedBuilder().setColor(0x7c3aed).setDescription(msg);
-}
-
-function getQueue(interaction) {
-  return useQueue(interaction.guild.id);
-}
+function err(msg)  { return new EmbedBuilder().setColor(0xed4245).setDescription(`❌ ${msg}`); }
+function ok(msg)   { return new EmbedBuilder().setColor(0x57f287).setDescription(msg); }
 
 export default {
   data: new SlashCommandBuilder()
     .setName('music')
     .setDescription('Music controls')
-    .addSubcommand(sub => sub
-      .setName('skip')
-      .setDescription('Skip the current song'))
-    .addSubcommand(sub => sub
-      .setName('stop')
-      .setDescription('Stop music and leave the voice channel'))
-    .addSubcommand(sub => sub
-      .setName('pause')
-      .setDescription('Pause the current song'))
-    .addSubcommand(sub => sub
-      .setName('resume')
-      .setDescription('Resume the paused song'))
-    .addSubcommand(sub => sub
-      .setName('queue')
-      .setDescription('Show the current queue'))
-    .addSubcommand(sub => sub
-      .setName('nowplaying')
-      .setDescription('Show what\'s currently playing'))
-    .addSubcommand(sub => sub
+    .setDMPermission(false)
+    .addSubcommand(s => s.setName('skip').setDescription('Skip the current track'))
+    .addSubcommand(s => s.setName('stop').setDescription('Stop music and leave the voice channel'))
+    .addSubcommand(s => s.setName('pause').setDescription('Pause the current track'))
+    .addSubcommand(s => s.setName('resume').setDescription('Resume the paused track'))
+    .addSubcommand(s => s.setName('queue').setDescription('Show the current queue'))
+    .addSubcommand(s => s.setName('nowplaying').setDescription("Show what's currently playing"))
+    .addSubcommand(s => s.setName('shuffle').setDescription('Toggle shuffle mode'))
+    .addSubcommand(s => s.setName('loop').setDescription('Toggle loop mode for the current track'))
+    .addSubcommand(s => s
       .setName('volume')
-      .setDescription('Set the playback volume')
-      .addIntegerOption(opt =>
-        opt.setName('level')
-          .setDescription('Volume level (1-100)')
-          .setMinValue(1)
-          .setMaxValue(100)
-          .setRequired(true)
-      ))
-    .addSubcommand(sub => sub
-      .setName('shuffle')
-      .setDescription('Shuffle the queue'))
-    .addSubcommand(sub => sub
-      .setName('loop')
-      .setDescription('Toggle loop mode')
-      .addStringOption(opt =>
-        opt.setName('mode')
-          .setDescription('Loop mode')
-          .setRequired(true)
-          .addChoices(
-            { name: 'Off', value: 'off' },
-            { name: 'Track', value: 'track' },
-            { name: 'Queue', value: 'queue' },
-          )
-      )),
+      .setDescription('Set the playback volume (takes effect on next track)')
+      .addIntegerOption(o =>
+        o.setName('level').setDescription('Volume 1-100').setMinValue(1).setMaxValue(100).setRequired(true)
+      )
+    ),
+  category: 'voice',
 
-  async execute(interaction, client) {
-    await interaction.deferReply();
-    const sub = interaction.options.getSubcommand();
+  async execute(interaction) {
+    const sub     = interaction.options.getSubcommand();
+    const guildId = interaction.guildId;
+    const q       = musicQueues.get(guildId);
 
-    // Skip
-    if (sub === 'skip') {
-      const queue = getQueue(interaction);
-      if (!queue?.isPlaying()) return interaction.editReply({ embeds: [errEmbed('Nothing is playing.')] });
-      const track = queue.currentTrack;
-      queue.node.skip();
-      return interaction.editReply({ embeds: [infoEmbed(`⏭️ Skipped **${track.title}**`)] });
+    if (!q) {
+      return interaction.reply({ embeds: [err('No music is playing. Use `/play` to start.')], flags: MessageFlags.Ephemeral });
     }
 
-    // Stop
-    if (sub === 'stop') {
-      const queue = getQueue(interaction);
-      if (!queue) return interaction.editReply({ embeds: [errEmbed('Nothing is playing.')] });
-      queue.delete();
-      return interaction.editReply({ embeds: [infoEmbed('⏹️ Stopped and left the voice channel.')] });
-    }
-
-    // Pause
-    if (sub === 'pause') {
-      const queue = getQueue(interaction);
-      if (!queue?.isPlaying()) return interaction.editReply({ embeds: [errEmbed('Nothing is playing.')] });
-      if (queue.node.isPaused()) return interaction.editReply({ embeds: [errEmbed('Already paused. Use `/music resume`.')] });
-      queue.node.pause();
-      return interaction.editReply({ embeds: [infoEmbed('⏸️ Paused.')] });
-    }
-
-    // Resume
-    if (sub === 'resume') {
-      const queue = getQueue(interaction);
-      if (!queue) return interaction.editReply({ embeds: [errEmbed('Nothing is paused.')] });
-      if (!queue.node.isPaused()) return interaction.editReply({ embeds: [errEmbed('Not paused.')] });
-      queue.node.resume();
-      return interaction.editReply({ embeds: [infoEmbed('▶️ Resumed.')] });
-    }
-
-    // Queue
-    if (sub === 'queue') {
-      const queue = getQueue(interaction);
-      if (!queue?.tracks.size && !queue?.currentTrack) {
-        return interaction.editReply({ embeds: [errEmbed('The queue is empty.')] });
+    switch (sub) {
+      case 'skip': {
+        if (!q.queue.length && !q.loop) {
+          destroyGuildQueue(guildId);
+          return interaction.reply({ embeds: [ok('⏭️ Skipped — queue is now empty.')] });
+        }
+        q.player.stop();
+        return interaction.reply({ embeds: [ok('⏭️ Skipped!')] });
       }
-      const current = queue.currentTrack;
-      const tracks = queue.tracks.toArray().slice(0, 10);
-      const embed = new EmbedBuilder()
-        .setColor(0x7c3aed)
-        .setTitle('🎵 Queue')
-        .setDescription(
-          `**Now Playing:** [${current?.title}](${current?.url}) (${current?.duration})\n\n` +
-          (tracks.length
-            ? tracks.map((t, i) => `**${i + 1}.** [${t.title}](${t.url}) (${t.duration})`).join('\n')
-            : '*No more tracks in queue*')
-        )
-        .setFooter({ text: `${queue.tracks.size} track(s) in queue` });
-      return interaction.editReply({ embeds: [embed] });
-    }
 
-    // Now Playing
-    if (sub === 'nowplaying') {
-      const queue = getQueue(interaction);
-      const track = queue?.currentTrack;
-      if (!track) return interaction.editReply({ embeds: [errEmbed('Nothing is playing.')] });
-      const progress = queue.node.createProgressBar();
-      const embed = new EmbedBuilder()
-        .setColor(0x7c3aed)
-        .setTitle('🎵 Now Playing')
-        .setDescription(`**[${track.title}](${track.url})**\n\n${progress}`)
-        .addFields(
-          { name: 'Duration', value: track.duration, inline: true },
-          { name: 'Author', value: track.author || 'Unknown', inline: true },
-        )
-        .setThumbnail(track.thumbnail);
-      return interaction.editReply({ embeds: [embed] });
-    }
+      case 'stop': {
+        destroyGuildQueue(guildId);
+        return interaction.reply({ embeds: [ok('⏹️ Stopped and left the voice channel.')] });
+      }
 
-    // Volume
-    if (sub === 'volume') {
-      const queue = getQueue(interaction);
-      if (!queue?.isPlaying()) return interaction.editReply({ embeds: [errEmbed('Nothing is playing.')] });
-      const level = interaction.options.getInteger('level');
-      queue.node.setVolume(level);
-      return interaction.editReply({ embeds: [infoEmbed(`🔊 Volume set to **${level}%**`)] });
-    }
+      case 'pause': {
+        q.player.pause();
+        return interaction.reply({ embeds: [ok('⏸️ Paused.')] });
+      }
 
-    // Shuffle
-    if (sub === 'shuffle') {
-      const queue = getQueue(interaction);
-      if (!queue?.tracks.size) return interaction.editReply({ embeds: [errEmbed('Not enough tracks to shuffle.')] });
-      queue.tracks.shuffle();
-      return interaction.editReply({ embeds: [infoEmbed('🔀 Queue shuffled!')] });
-    }
+      case 'resume': {
+        q.player.unpause();
+        return interaction.reply({ embeds: [ok('▶️ Resumed.')] });
+      }
 
-    // Loop
-    if (sub === 'loop') {
-      const queue = getQueue(interaction);
-      if (!queue?.isPlaying()) return interaction.editReply({ embeds: [errEmbed('Nothing is playing.')] });
-      const { QueueRepeatMode } = await import('discord-player');
-      const mode = interaction.options.getString('mode');
-      const modeMap = {
-        off: QueueRepeatMode.OFF,
-        track: QueueRepeatMode.TRACK,
-        queue: QueueRepeatMode.QUEUE,
-      };
-      queue.setRepeatMode(modeMap[mode]);
-      return interaction.editReply({ embeds: [infoEmbed(`🔁 Loop mode set to **${mode}**`)] });
+      case 'queue': {
+        if (!q.current && !q.queue.length) {
+          return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x7c3aed).setDescription('Queue is empty. Use `/play` to add tracks!')] });
+        }
+        const lines = [];
+        if (q.current) lines.push(`**▶ Now:** [${q.current.title}](${q.current.jamendoUrl}) — ${q.current.artist}`);
+        q.queue.slice(0, 10).forEach((t, i) =>
+          lines.push(`**${i + 1}.** ${t.title} — ${t.artist}`)
+        );
+        if (q.queue.length > 10) lines.push(`*...and ${q.queue.length - 10} more*`);
+        return interaction.reply({
+          embeds: [new EmbedBuilder()
+            .setTitle('🎵 Queue')
+            .setColor(0x7c3aed)
+            .setDescription(lines.join('\n'))
+            .setFooter({ text: `${q.queue.length} track(s) remaining | Loop: ${q.loop ? 'ON' : 'OFF'} | Shuffle: ${q.shuffle ? 'ON' : 'OFF'}` })
+          ]
+        });
+      }
+
+      case 'nowplaying': {
+        if (!q.current) return interaction.reply({ embeds: [err('Nothing is playing.')], flags: MessageFlags.Ephemeral });
+        const t = q.current;
+        const embed = new EmbedBuilder()
+          .setTitle('🎵 Now Playing')
+          .setDescription(`**[${t.title}](${t.jamendoUrl})**\nby ${t.artist}`)
+          .setColor(0x7c3aed)
+          .addFields(
+            { name: 'Duration', value: formatDuration(t.duration), inline: true },
+            { name: 'Album',    value: t.album,                    inline: true },
+            { name: 'License',  value: '✅ Royalty-free (CC)',     inline: true },
+          );
+        if (t.image) embed.setThumbnail(t.image);
+        return interaction.reply({ embeds: [embed] });
+      }
+
+      case 'volume': {
+        const level = interaction.options.getInteger('level');
+        q.volume = level / 100;
+        return interaction.reply({ embeds: [ok(`🔊 Volume set to **${level}%** — takes effect on the next track.`)] });
+      }
+
+      case 'shuffle': {
+        q.shuffle = !q.shuffle;
+        return interaction.reply({ embeds: [ok(`🔀 Shuffle ${q.shuffle ? '**enabled**' : '**disabled**'}.`)] });
+      }
+
+      case 'loop': {
+        q.loop = !q.loop;
+        return interaction.reply({ embeds: [ok(`🔁 Loop ${q.loop ? '**enabled**' : '**disabled**'}.`)] });
+      }
     }
   },
 };
